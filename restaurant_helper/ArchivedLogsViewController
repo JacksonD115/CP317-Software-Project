@@ -1,0 +1,163 @@
+//Displays list of all archived logs
+
+import UIKit
+import FirebaseDatabase
+
+class ArchivedLogsViewController: UIViewController, UITableViewDelegate, UITableViewDataSource {
+
+    private let tableView = UITableView()
+    private var ref: DatabaseReference!
+    private var archivedLogs: [ArchivedLog] = []
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Archived Logs"
+
+        ref = Database.database().reference()
+        setupTableView()
+        fetchArchivedLogs()
+    }
+
+    private func setupTableView() {
+        view.addSubview(tableView)
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "archivedLogCell")
+
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leftAnchor.constraint(equalTo: view.leftAnchor),
+            tableView.rightAnchor.constraint(equalTo: view.rightAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+    }
+
+    private func fetchArchivedLogs() {
+        ref.child("archivedLogs").observeSingleEvent(of: .value) { snapshot, _ in  // Add second parameter '_'
+            guard let logsSnapshot = snapshot.value as? [String: [String: Any]] else {
+                print("No logs found or unable to parse the root level.")
+                return
+            }
+
+            self.archivedLogs = logsSnapshot.compactMap { (key, logDict) -> ArchivedLog? in
+                guard let tableNumber = logDict["tableNumber"] as? Int,
+                      let timestamp = logDict["timestamp"] as? TimeInterval else {
+                    print("Missing tableNumber or timestamp for log \(key)")
+                    return nil
+                }
+
+                // Handle optional startTime and endTime
+                let startTimeInterval = logDict["startTime"] as? TimeInterval
+                let startTime = startTimeInterval != nil ? Date(timeIntervalSince1970: startTimeInterval!) : nil
+
+                let endTimeInterval = logDict["endTime"] as? TimeInterval
+                let endTime = endTimeInterval != nil ? Date(timeIntervalSince1970: endTimeInterval!) : nil
+
+                let messages = logDict["messages"] as? [[String: Any]] ?? []
+                let orders = logDict["orders"] as? [[String: Any]] ?? []
+                let totalCost = logDict["totalCost"] as? Double
+
+                let logMessages: [(String, Date)] = messages.compactMap { entry in
+                    if let message = entry["message"] as? String,
+                       let messageTimestamp = entry["timestamp"] as? TimeInterval {
+                        return (message, Date(timeIntervalSince1970: messageTimestamp))
+                    } else {
+                        print("Invalid or missing message/timestamp for log \(key)")
+                        return nil
+                    }
+                }
+
+                let logOrders: [(String, Date, String?, Double)] = orders.compactMap { entry in
+                    if let order = entry["order"] as? String,
+                       let orderTimestamp = entry["timestamp"] as? TimeInterval {
+                        let timeTaken = entry["timeTaken"] as? String
+                        let totalCost = entry["totalCost"] as? Double ?? 0.0
+                        print("Parsed order: \(order), TotalCost: \(totalCost)")
+                        return (order, Date(timeIntervalSince1970: orderTimestamp), timeTaken, totalCost)
+                        
+                    } else {
+                        print("Invalid or missing order/timestamp for log \(key)")
+                        return nil
+                    }
+                }
+
+                return ArchivedLog(
+                    id: key,
+                    tableNumber: tableNumber,
+                    timestamp: Date(timeIntervalSince1970: timestamp),
+                    startTime: startTime, 
+                    endTime: endTime,
+                    totalCost: totalCost,
+                    
+                    messages: logMessages,
+                    orders: logOrders
+                )
+            }
+
+            // Sort logs by timestamp (latest first)
+            self.archivedLogs.sort(by: { $0.timestamp > $1.timestamp })
+
+            DispatchQueue.main.async {
+                self.tableView.reloadData()
+            }
+        }
+    }
+
+    func numberOfSections(in tableView: UITableView) -> Int {
+        return 1
+    }
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return archivedLogs.count
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "archivedLogCell", for: indexPath)
+        let log = archivedLogs[indexPath.row]
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "MM/dd/yyyy HH:mm:ss"
+        cell.textLabel?.text = "Table \(log.tableNumber) - \(dateFormatter.string(from: log.timestamp))"
+        cell.accessoryType = .disclosureIndicator
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        let log = archivedLogs[indexPath.row]
+        let logDetailVC = ArchivedLogDetailViewController(archivedLog: log)
+        navigationController?.pushViewController(logDetailVC, animated: true)
+    }
+    
+    //Allow editing to delete archived logs
+    func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
+        if editingStyle == .delete {
+            let logToDelete = archivedLogs[indexPath.row]
+            let alert = UIAlertController(title: "Delete Log", message: "Are you sure you want to delete the log for Table \(logToDelete.tableNumber)?", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: nil))
+            alert.addAction(UIAlertAction(title: "Delete", style: .destructive, handler: { _ in
+                self.ref.child("archivedLogs").child(logToDelete.id).removeValue { error, _ in
+                    if let error = error {
+                        print("Failed to delete log: \(error)")
+                    } else {
+                        self.archivedLogs.remove(at: indexPath.row)
+                        tableView.deleteRows(at: [indexPath], with: .fade)
+                    }
+                }
+            }))
+            present(alert, animated: true, completion: nil)
+        }
+    }
+}
+
+struct ArchivedLog {
+    let id: String
+    let tableNumber: Int
+    let timestamp: Date
+    let startTime: Date?
+    let endTime: Date?
+    let totalCost: Double?
+    
+    let messages: [(String, Date)]
+    let orders: [(String, Date, String?, Double)]
+}
