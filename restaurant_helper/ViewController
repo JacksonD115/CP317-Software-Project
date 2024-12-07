@@ -1,0 +1,146 @@
+//
+//  ViewController.swift
+//  Resturant_helper
+
+import UIKit
+import UserNotifications
+
+class ViewController: UIViewController {
+    
+    
+    let employeeButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Employee Login", for: .normal)
+        button.titleLabel?.lineBreakMode = .byWordWrapping
+        button.titleLabel?.textAlignment = .center
+        button.addTarget(self, action: #selector(toEmployee), for: .touchUpInside)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 24)
+        button.backgroundColor = .systemGreen
+        button.setTitleColor(.white, for: .normal)
+        button.contentEdgeInsets = UIEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        button.layer.cornerRadius = 10
+        button.layer.masksToBounds = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+    
+    let customerButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Customers Click Here!", for: .normal)
+        button.addTarget(self, action: #selector(toCustomer), for: .touchUpInside)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 24)
+        button.backgroundColor = .systemBlue
+        button.setTitleColor(.white, for: .normal)
+        button.contentEdgeInsets = UIEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        button.layer.cornerRadius = 10
+        button.layer.masksToBounds = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+    
+    let settingsButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Settings", for: .normal)
+        button.addTarget(self, action: #selector(toSettings), for: .touchUpInside)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 18)
+        button.backgroundColor = .systemGray
+        button.setTitleColor(.white, for: .normal)
+        button.contentEdgeInsets = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+        button.layer.cornerRadius = 8
+        button.layer.masksToBounds = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+    
+    let occupiedTablesButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("View Table Availability", for: .normal)
+        button.addTarget(self, action: #selector(toOccupiedTables), for: .touchUpInside)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 18)
+        button.titleLabel?.lineBreakMode = .byWordWrapping
+        button.backgroundColor = .darkGray
+        button.setTitleColor(.white, for: .normal)
+        button.layer.cornerRadius = 8
+        button.layer.masksToBounds = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        addBackgroundImage()
+        view.backgroundColor = .white
+        view.addSubview(employeeButton)
+        view.addSubview(customerButton)
+        //view.addSubview(settingsButton)
+        view.addSubview(occupiedTablesButton)
+        
+        NSLayoutConstraint.activate([
+            
+            employeeButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
+            employeeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: -15),
+            employeeButton.heightAnchor.constraint(equalToConstant: 80),
+            employeeButton.widthAnchor.constraint(equalToConstant: 175),
+            
+            customerButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            customerButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            customerButton.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            
+            //settingsButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            //settingsButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: -15),
+            //settingsButton.heightAnchor.constraint(equalToConstant: 40),
+            //settingsButton.widthAnchor.constraint(equalToConstant: 110),
+            
+            occupiedTablesButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            occupiedTablesButton.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -15),
+            occupiedTablesButton.heightAnchor.constraint(equalToConstant: 70),
+            occupiedTablesButton.widthAnchor.constraint(equalToConstant: 135)
+            
+        ])
+    }
+
+    @objc func toEmployee() {
+        let employeeVC = employeeLoginController()
+        navigationController?.pushViewController(employeeVC, animated: true)
+    }
+
+    
+    @objc func toCustomer(){
+        let customerVC = customerLoginController()
+        navigationController?.pushViewController(customerVC, animated: true)
+    }
+    
+    @objc func toOccupiedTables(){
+        let occupiedVC = OccupiedTablesViewController()
+        navigationController?.pushViewController(occupiedVC, animated: true)
+    }
+    
+    @objc func toSettings(){
+        let settingsVC = SettingsViewController()
+        navigationController?.pushViewController(settingsVC, animated: true)
+    }
+    
+    
+    func requestNotificationPermission() {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if granted {
+                print("Permission Granted")
+            }
+            else{
+                print("Permission Denied")
+            }
+        }
+    }
+    
+    func addBackgroundImage() {
+        let backgroundImage = UIImage(named: "McdonaldsBackground")
+        let backgroundImageView = UIImageView(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height))
+        backgroundImageView.image = backgroundImage
+        backgroundImageView.contentMode = .scaleAspectFill
+        view.addSubview(backgroundImageView)
+        view.sendSubviewToBack(backgroundImageView)
+    }
+
+}
+
