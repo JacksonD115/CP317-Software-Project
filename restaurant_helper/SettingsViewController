@@ -1,0 +1,286 @@
+//
+//  SettingsViewController.swift
+//  Resturant_Helper
+
+import Foundation
+import CoreData
+import UIKit
+import FirebaseDatabase
+
+class SettingsViewController: UIViewController {
+    
+    var ref = Database.database().reference()
+    var restaurantID: Int = 0
+    
+    private let yellowTimeLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .black
+        label.text = "Moderately Late Time (Yellow):"
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
+    private let redTimeLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .black
+        label.text = "Late Time (Red):"
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
+    private let yellowTextField: UITextField = {
+        let field = UITextField()
+        field.borderStyle = .roundedRect
+        field.placeholder = "Enter Moderately Late Time (s)"
+        field.textAlignment = .center
+        field.translatesAutoresizingMaskIntoConstraints = false
+        return field
+    }()
+    
+    private let redTextField: UITextField = {
+        let field = UITextField()
+        field.borderStyle = .roundedRect
+        field.placeholder = "Enter Late Time (s)"
+        field.textAlignment = .center
+        field.translatesAutoresizingMaskIntoConstraints = false
+        return field
+    }()
+    
+    private let taxLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .black
+        label.text = "Enter tax rate (15 = 15%)"
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
+    private let taxField: UITextField = {
+        let field = UITextField()
+        field.borderStyle = .roundedRect
+        field.placeholder = "Enter Tax Rate(%)"
+        field.textAlignment = .center
+        field.translatesAutoresizingMaskIntoConstraints = false
+        return field
+    }()
+    
+    private let saveTaxButton: UIButton = {
+        let button = UIButton()
+        button.backgroundColor = .systemGray
+        button.setTitleColor(.white, for: .normal)
+        button.setTitle("Save Tax Rate", for: .normal)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
+        button.contentEdgeInsets = UIEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        button.addTarget(self, action: #selector(updateTax), for: .touchUpInside)
+        button.titleLabel?.lineBreakMode = .byWordWrapping
+        button.layer.cornerRadius = 8
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+    
+    private let saveButton: UIButton = {
+        let button = UIButton()
+        button.backgroundColor = .green
+        button.setTitleColor(.white, for: .normal)
+        button.setTitle("Save Data", for: .normal)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
+        button.contentEdgeInsets = UIEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        button.addTarget(self, action: #selector(saveData), for: .touchUpInside)
+        button.titleLabel?.lineBreakMode = .byWordWrapping
+        button.layer.cornerRadius = 8
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        view.addSubview(yellowTextField)
+        view.addSubview(redTextField)
+        view.addSubview(yellowTimeLabel)
+        view.addSubview(redTimeLabel)
+        view.addSubview(saveButton)
+        view.addSubview(taxLabel)
+        view.addSubview(taxField)
+        view.addSubview(saveTaxButton)
+        
+        NSLayoutConstraint.activate([
+                   
+           saveButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 100),
+           saveButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+           saveButton.widthAnchor.constraint(equalToConstant: 100),
+           saveButton.heightAnchor.constraint(equalToConstant: 40),
+
+           yellowTimeLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+           yellowTimeLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+           //yellowTimeLabel.widthAnchor.constraint(equalToConstant: 100),
+
+           yellowTextField.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+           yellowTextField.topAnchor.constraint(equalTo: yellowTimeLabel.bottomAnchor, constant: 20),
+           yellowTextField.heightAnchor.constraint(equalToConstant: 40),
+
+           redTimeLabel.topAnchor.constraint(equalTo: yellowTextField.bottomAnchor, constant: 20),
+           redTimeLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+           //redTimeLabel.widthAnchor.constraint(equalTo: yellowTimeLabel.widthAnchor),
+
+           redTextField.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+           redTextField.topAnchor.constraint(equalTo: redTimeLabel.bottomAnchor, constant: 20),
+           redTextField.heightAnchor.constraint(equalTo: yellowTextField.heightAnchor),
+           
+           taxLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+           taxLabel.topAnchor.constraint(equalTo: redTextField.bottomAnchor, constant: 50),
+           
+           taxField.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+           taxField.topAnchor.constraint(equalTo: taxLabel.bottomAnchor, constant: 20),
+           taxField.heightAnchor.constraint(equalToConstant: 50),
+           
+           saveTaxButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+           saveTaxButton.topAnchor.constraint(equalTo: saveButton.bottomAnchor, constant: 35),
+           saveTaxButton.widthAnchor.constraint(equalToConstant: 125),
+           saveTaxButton.heightAnchor.constraint(equalToConstant: 75)
+       ])
+    }
+    
+    @objc func saveDataCopy(){
+        guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else { return }
+        let context = appDelegate.persistentContainer.viewContext
+        
+        let fetchRequest = NSFetchRequest<NSManagedObject>(entityName: "EmployeeTimes")
+        
+        do {
+            let results = try context.fetch(fetchRequest)
+            
+            let times: NSManagedObject
+            if let existingTimes = results.first {
+                times = existingTimes
+            } else {
+                let entity = NSEntityDescription.entity(forEntityName: "EmployeeTimes", in: context)!
+                times = NSManagedObject(entity: entity, insertInto: context)
+            }
+            
+            let yellowTime = Int(yellowTextField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 300
+            let redTime = Int(redTextField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 600
+            
+            times.setValue(yellowTime, forKey: "yellowTime")
+            times.setValue(redTime, forKey: "redTime")
+            
+            try context.save()
+            print("Data Saved")
+            showAlert()
+        } catch let error as NSError {
+            print("Could not save. \(error), \(error.userInfo)")
+        }
+    }
+    
+    @objc func showAlert() {
+        let alert = UIAlertController(title: "Data Saved", message: "The Times Now Are: Yellow Time: \(yellowTextField.text), Red Time: \(redTextField.text)", preferredStyle: .alert)
+        
+        let okAction = UIAlertAction(title: "OK", style: .default) { _ in
+            print("OK")
+        }
+        
+        alert.addAction(okAction)
+        
+        present(alert, animated: true, completion: nil)
+    }
+    
+    @objc func showTaxAlert() {
+        let alert = UIAlertController(title: "Tax Saved", message: "Tax rate for this restaurant is now \(taxField.text)%", preferredStyle: .alert)
+        
+        let okAction = UIAlertAction(title: "OK", style: .default)
+        
+        alert.addAction(okAction)
+        present(alert, animated: true, completion: nil)
+    }
+    
+    @objc func updateTax() {
+        ref.child("restaurants").child("\(restaurantID)").child("taxRate").observeSingleEvent(of: .value) { [weak self] snapshot, _ in
+            guard let self = self else { return }
+            guard let taxFieldText = self.taxField.text,
+                  let newTax = Double(taxFieldText) else {
+                return
+            }
+            
+            self.ref.child("restaurants").child("\(restaurantID)").updateChildValues(["taxRate": newTax]) { error, _ in
+                if let error = error {
+                    return
+                } else {
+                    self.showTaxAlert()
+                }
+            }
+        }
+    }
+    
+    @objc func saveData() {
+        ref.child("restaurants").child("\(restaurantID)").child("yellowTime").observeSingleEvent(of: .value) { [weak self] snapshot, _ in
+            guard let self = self else { return }
+            guard let yellowTimeField = self.yellowTextField.text,
+                  let newYellowTime = Int(yellowTimeField) else {
+                return
+            }
+            self.ref.child("restaurants").child("\(restaurantID)").updateChildValues(["yellowTime": newYellowTime]) { error, _ in
+                if let error = error {
+                    return
+                } else {
+                    self.showAlert()
+                }
+                
+            }
+        }
+        
+        ref.child("restaurants").child("\(restaurantID)").child("redTime").observeSingleEvent(of: .value) { [weak self] snapshot, _ in
+            guard let self = self else { return }
+            guard let redTimeField = self.redTextField.text,
+                  let newRedTime = Int(redTimeField) else {
+                return
+            }
+            self.ref.child("restaurants").child("\(restaurantID)").updateChildValues(["redTime": newRedTime]) { error, _ in
+                if let error = error {
+                    return
+                } else {
+                    self.showAlert()
+                }
+                
+            }
+        }
+    }
+    
+    /***
+    @objc func initializeRestaurant() {
+        // Reference the specific restaurant node
+        let restaurantRef = ref.child("restaurants").child("\(restaurantID)")
+        
+        // Check if the restaurant already exists
+        restaurantRef.observeSingleEvent(of: .value) { [weak self] snapshot in
+            guard let self = self else { return }
+            
+            if snapshot.exists() {
+                print("Restaurant \(self.restaurantID) already exists.")
+            } else {
+                // Set default values for a new restaurant
+                let defaultValues: [String: Any] = [
+                    "name": "Restaurant \(self.restaurantID)",
+                    "taxRate": 15.0, // Default tax rate (15%)
+                    "createdAt": Date().timeIntervalSince1970, // Timestamp for creation
+                    "yellowTime": 300, // Default moderately late time
+                    "redTime": 600    // Default late time
+                ]
+                
+                restaurantRef.setValue(defaultValues) { error, _ in
+                    if let error = error {
+                        print("Error initializing restaurant: \(error.localizedDescription)")
+                    } else {
+                        print("Restaurant \(self.restaurantID) created successfully.")
+                        let alert = UIAlertController(title: "Success", message: "Restaurant \(self.restaurantID) has been initialized.", preferredStyle: .alert)
+                        alert.addAction(UIAlertAction(title: "OK", style: .default))
+                        self.present(alert, animated: true, completion: nil)
+                    }
+                }
+            }
+        }
+    } **/
+
+}
+
