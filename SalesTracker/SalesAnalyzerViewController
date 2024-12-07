@@ -1,0 +1,233 @@
+// Bar graph view
+
+import UIKit
+import DGCharts
+import FirebaseDatabase
+
+class SalesAnalyzerViewController: UIViewController {
+    
+    private let ref = Database.database().reference()
+    private var salesData = [String: Int]()
+    
+    private var scrollView: UIScrollView!
+    private var contentView: UIView!
+    private var barChartView: BarChartView!
+    private var updateTimer: Timer?
+    private var datePicker: UIDatePicker!
+    private var dateLabel: UILabel!
+    private var updateTimeInput: UITextField!
+    private var updateTimeLabel: UILabel!
+
+    private let itemsToTrack: [String] = [
+        "French Fries", "Chicken McNuggets", "Salad", "Coca-Cola", "Sprite",
+        "Milkshake", "Big Mac", "Quarter Pounder with Cheese", "McChicken"
+    ]
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Sales Data"
+        
+        updateTimeLabel = UILabel()
+        updateTimeLabel.text = "Seconds per chart update:"
+        updateTimeLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(updateTimeLabel)
+        
+        updateTimeInput = UITextField()
+        updateTimeInput.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(updateTimeInput)
+        
+        scrollView = UIScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
+        
+        contentView = UIView()
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(contentView)
+        
+        barChartView = BarChartView()
+        barChartView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(barChartView)
+        
+        datePicker = UIDatePicker()
+        datePicker.translatesAutoresizingMaskIntoConstraints = false
+        datePicker.datePickerMode = .date
+        datePicker.maximumDate = Date()
+        datePicker.addTarget(self, action: #selector(dateChanged), for: .touchUpInside)
+        view.addSubview(datePicker)
+        
+        dateLabel = UILabel()
+        dateLabel.text = "Get data since:"
+        dateLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(dateLabel)
+        
+        // Set up constraints for the scroll view and content view
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            
+            contentView.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            contentView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            contentView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+            
+            // Set constraints for the bar chart view
+            barChartView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            barChartView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            barChartView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            barChartView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            barChartView.heightAnchor.constraint(equalToConstant: 600),
+            
+            datePicker.topAnchor.constraint(equalTo: barChartView.bottomAnchor, constant: 45),
+            datePicker.centerXAnchor.constraint(equalTo: view.centerXAnchor, constant: 100),
+            //datePicker.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            
+            dateLabel.topAnchor.constraint(equalTo: barChartView.bottomAnchor, constant: 50),
+            dateLabel.trailingAnchor.constraint(equalTo: datePicker.leadingAnchor, constant: -10),
+            
+            updateTimeInput.topAnchor.constraint(equalTo: dateLabel.bottomAnchor, constant: 50),
+            updateTimeInput.trailingAnchor.constraint(equalTo: updateTimeLabel.leadingAnchor, constant: -35),
+            
+            updateTimeLabel.topAnchor.constraint(equalTo: dateLabel.bottomAnchor, constant: 50),
+            updateTimeLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor, constant: -25)
+            
+            
+        ])
+        
+        fetchAndUpdateChart()
+        
+        updateTimer = Timer.scheduledTimer(timeInterval: 1.0, target: self, selector: #selector(fetchAndUpdateChart), userInfo: nil, repeats: true)
+    }
+    
+    deinit {
+        updateTimer?.invalidate()
+    }
+    
+    @objc func fetchAndUpdateChart() {
+        fetchArchivedLogs { logs in
+            let selectedDate = self.datePicker.date
+            self.salesData = self.analyzeSalesData(logs: logs, since: selectedDate)
+            self.updateChartWithData(salesData: self.salesData)
+        }
+    }
+    
+    func fetchArchivedLogs(completion: @escaping ([ArchivedLog]) -> Void) {
+        ref.child("archivedLogs").observeSingleEvent(of: .value) { snapshot in
+            guard let logsDict = snapshot.value as? [String: [String: Any]] else {
+                print("No logs found in Firebase.")
+                completion([])
+                return
+            }
+            
+            let logs = logsDict.compactMap { (key, dict) -> ArchivedLog? in
+                return ArchivedLog(dictionary: dict)
+            }
+            completion(logs)
+        }
+    }
+    
+    func analyzeSalesData(logs: [ArchivedLog], since selectedDate: Date) -> [String: Int] {
+        var salesData = [String: Int]()
+        
+        logs.forEach { log in
+            if Date(timeIntervalSince1970: log.timestamp) >= selectedDate {
+                log.orders.forEach { order in
+                    // Iterate over each item we are tracking
+                    itemsToTrack.forEach { item in
+                        // Check if the order contains this item
+                        if let range = order.range(of: "\(item) x") {
+                            let quantityStartIndex = order.index(range.upperBound, offsetBy: 0)
+                            let quantityString = order[quantityStartIndex...].components(separatedBy: " ").first?.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if let quantity = Int(quantityString ?? "1") {
+                                salesData[item, default: 0] += quantity
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return salesData
+    }
+
+    
+    func updateChartWithData(salesData: [String: Int]) {
+        var dataEntries: [BarChartDataEntry] = []
+        
+        for (index, item) in itemsToTrack.enumerated() {
+            let itemCount = salesData[item] ?? 0
+            let dataEntry = BarChartDataEntry(x: Double(index), y: Double(itemCount))
+            dataEntries.append(dataEntry)
+        }
+        
+        let chartDataSet = BarChartDataSet(entries: dataEntries, label: "Items Sold")
+        let chartData = BarChartData(dataSet: chartDataSet)
+        
+        chartDataSet.colors = ChartColorTemplates.colorful()
+        chartDataSet.valueFont = .systemFont(ofSize: 10)
+        chartDataSet.valueTextColor = .black
+        
+        barChartView.data = chartData
+        
+        // Customize the x-axis to display item names
+        barChartView.xAxis.valueFormatter = IndexAxisValueFormatter(values: itemsToTrack)
+        barChartView.xAxis.granularity = 1
+        barChartView.xAxis.labelPosition = .bottom
+        barChartView.xAxis.labelFont = .systemFont(ofSize: 12)
+        barChartView.xAxis.labelRotationAngle = -90
+        barChartView.xAxis.labelCount = itemsToTrack.count
+        
+        chartDataSet.drawValuesEnabled = true
+        
+        barChartView.xAxis.drawGridLinesEnabled = false
+        barChartView.leftAxis.drawGridLinesEnabled = false
+        barChartView.rightAxis.drawGridLinesEnabled = false
+        
+        barChartView.legend.verticalAlignment = .top
+        barChartView.legend.horizontalAlignment = .right
+        
+        barChartView.extraBottomOffset = 200
+        
+    }
+    
+    @objc func dateChanged() {
+        fetchAndUpdateChart()
+    }
+
+}
+
+struct ArchivedLog {
+    let timestamp: TimeInterval
+    let orders: [String]
+    
+    init?(dictionary: [String: Any]) {
+        guard let ordersArray = dictionary["orders"] as? [[String: Any]],
+            let timestamp = dictionary["timestamp"] as? TimeInterval
+        else {
+            return nil
+        }
+        
+        self.timestamp = timestamp
+        self.orders = ordersArray.compactMap { $0["order"] as? String }
+    }
+}
+
+struct Order {
+    let order: String
+    let timeTaken: String
+    let timestamp: TimeInterval
+    
+    init?(dictionary: [String: Any]) {
+        guard let order = dictionary["order"] as? String,
+              let timeTaken = dictionary["timeTaken"] as? String,
+              let timestamp = dictionary["timestamp"] as? TimeInterval else {
+            return nil
+        }
+        self.order = order
+        self.timeTaken = timeTaken
+        self.timestamp = timestamp
+    }
+}
