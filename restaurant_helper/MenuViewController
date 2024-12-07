@@ -1,0 +1,244 @@
+//Item menu the customer orders from
+
+import Foundation
+import UIKit
+import FirebaseDatabase
+
+
+class MenuViewController: UIViewController {
+    
+    private var tableNumber: Int
+    private var orderList: [String] = []
+    private var orderQuantities: [String: Int] = [:]
+    private let ref = Database.database().reference()
+    
+    private var buttonToMenuItem: [UIButton: String] = [:]
+    
+    init(tableNumber: Int) {
+        self.tableNumber = tableNumber
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Menu"
+        
+        setupUI()
+    }
+    
+    private let menuPrices: [String: Double] = [
+        "Big Mac": 5.99,
+        "Quarter Pounder with Cheese": 6.99,
+        "McChicken": 4.99,
+        "French Fries": 3.49,
+        "Chicken McNuggets": 8.99,
+        "Salad": 3.99,
+        "Coca-Cola": 1.99,
+        "Sprite": 1.99,
+        "Milkshake": 3.99,
+    ]
+
+    private func setupUI() {
+        let menuSections = [
+            "Burgers": [
+                ("Big Mac", "($5.99) Two all-beef patties, special sauce, lettuce, cheese, pickles, onions on a sesame seed bun."),
+                ("Quarter Pounder with Cheese", "($6.99) Quarter pound of 100% beef with cheese, onions, pickles, mustard, and ketchup."),
+                ("McChicken", "($4.99) Crispy chicken patty with lettuce and mayonnaise.")
+            ],
+            "Sides": [
+                ("French Fries", "($3.49) Golden, crispy fries cooked to perfection."),
+                ("Chicken McNuggets", "($8.99) Tender and juicy chicken nuggets with your choice of sauce."),
+                ("Salad", "($3.99) Fresh, crisp vegetables with your choice of dressing.")
+            ],
+            "Drinks": [
+                ("Coca-Cola", "($1.99) Refreshing classic Coca-Cola."),
+                ("Sprite", "($1.99) Lemon-lime soda with a crisp, clean taste."),
+                ("Milkshake", "($3.99) Thick and creamy milkshake in various flavors.")
+            ]
+        ]
+        
+        let scrollView = UIScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
+        
+        let stackView = UIStackView()
+        stackView.axis = .vertical
+        stackView.spacing = 15
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(stackView)
+        
+        for (section, items) in menuSections {
+            let sectionLabel = UILabel()
+            sectionLabel.text = section
+            sectionLabel.font = UIFont.boldSystemFont(ofSize: 20)
+            sectionLabel.textAlignment = .left
+            sectionLabel.translatesAutoresizingMaskIntoConstraints = false
+            stackView.addArrangedSubview(sectionLabel)
+            
+            for item in items {
+                let itemStackView = UIStackView()
+                itemStackView.axis = .vertical
+                itemStackView.spacing = 2
+                itemStackView.translatesAutoresizingMaskIntoConstraints = false
+                
+                let button = UIButton(type: .system)
+                button.setTitle("\(item.0)", for: .normal)
+                button.contentHorizontalAlignment = .left
+                button.addTarget(self, action: #selector(orderItemTapped(_:)), for: .touchUpInside)
+                button.translatesAutoresizingMaskIntoConstraints = false
+                
+                buttonToMenuItem[button] = item.0
+                
+                let descriptionLabel = UILabel()
+                descriptionLabel.text = item.1
+                descriptionLabel.font = UIFont.systemFont(ofSize: 14)
+                descriptionLabel.textColor = .gray
+                descriptionLabel.numberOfLines = 0
+                descriptionLabel.textAlignment = .left
+                descriptionLabel.translatesAutoresizingMaskIntoConstraints = false
+                
+                itemStackView.addArrangedSubview(button)
+                itemStackView.addArrangedSubview(descriptionLabel)
+                stackView.addArrangedSubview(itemStackView)
+            }
+        }
+        
+        let orderSummaryLabel = UILabel()
+        orderSummaryLabel.text = "Your Order: \(orderList.joined(separator: ", "))"
+        orderSummaryLabel.textAlignment = .center
+        orderSummaryLabel.numberOfLines = 0
+        orderSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        stackView.addArrangedSubview(orderSummaryLabel)
+
+        let finalizeOrderButton = UIButton(type: .system)
+        finalizeOrderButton.setTitle("Finalize Order", for: .normal)
+        finalizeOrderButton.addTarget(self, action: #selector(finalizeOrderTapped), for: .touchUpInside)
+        finalizeOrderButton.translatesAutoresizingMaskIntoConstraints = false
+        stackView.addArrangedSubview(finalizeOrderButton)
+        
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            
+            stackView.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            stackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 20),
+            stackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -20),
+            stackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -40)
+        ])
+    }
+
+    @objc private func orderItemTapped(_ sender: UIButton) {
+        guard let item = buttonToMenuItem[sender] else { return }
+
+        let alertController = UIAlertController(title: "Quantity", message: "Enter quantity for \(item)", preferredStyle: .alert)
+        
+        alertController.addTextField { textField in
+            textField.placeholder = "Enter quantity"
+            textField.keyboardType = .numberPad
+            
+            if let currentQuantity = self.orderQuantities[item] {
+                textField.text = "\(currentQuantity)"
+            }
+        }
+        
+        let orderAction = UIAlertAction(title: "Add to Order", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            if let quantityText = alertController.textFields?.first?.text,
+               let quantity = Int(quantityText), quantity > 0 {
+                
+                self.orderQuantities[item] = quantity
+                let orderEntry = "\(item) x\(quantity) "
+                
+                if let index = self.orderList.firstIndex(where: { $0.starts(with: "\(item) x") }) {
+                    self.orderList[index] = orderEntry
+                } else {
+                    self.orderList.append(orderEntry)
+                }
+                
+                if let orderSummaryLabel = self.view.subviews.compactMap({ $0 as? UILabel }).first(where: { $0.text?.starts(with: "Your Order:") == true }) {
+                    orderSummaryLabel.text = "Your Order: \(self.orderList.joined(separator: ", "))"
+                }
+            }
+        }
+        
+        let cancelAction = UIAlertAction(title: "Cancel", style: .cancel, handler: nil)
+        
+        alertController.addAction(orderAction)
+        alertController.addAction(cancelAction)
+        
+        present(alertController, animated: true, completion: nil)
+    }
+
+
+    @objc private func finalizeOrderTapped() {
+        let orderSummary = orderList.joined(separator: "\n")
+        let newTotalPrice = calculateTotalPrice()
+        
+        let alertController = UIAlertController(
+            title: "Confirm Order",
+            message: "You are about to place the following order:\n\n\(orderSummary)\n\nTotal Price: $\(String(format: "%.2f", newTotalPrice))",
+            preferredStyle: .alert
+        )
+        
+        let confirmAction = UIAlertAction(title: "Confirm", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            
+            self.ref.child("tableStatuses").child("table\(self.tableNumber)").observeSingleEvent(of: .value) { snapshot in
+                guard let tableData = snapshot.value as? [String: Any] else {
+                    return
+                }
+                
+                let currentTotalPrice = tableData["totalPrice"] as? Double ?? 0.0
+                let updatedTotalPrice = currentTotalPrice + newTotalPrice
+                
+                // Add the order to the `order` field
+                self.ref.child("tableStatuses").child("table\(self.tableNumber)").updateChildValues([
+                    "order": self.orderList,
+                    "totalPrice": updatedTotalPrice,
+                    "hasActiveOrder": true,
+                    "hasPaid": false
+                ])
+                
+                let orderReceivedAlert = UIAlertController(
+                    title: "Order Received",
+                    message: "Your order has been received successfully.\n\nTotal Price: $\(String(format: "%.2f", newTotalPrice))",
+                    preferredStyle: .alert
+                )
+                
+                let okAction = UIAlertAction(title: "OK", style: .default) { _ in
+                    self.navigationController?.popViewController(animated: true)
+                }
+                
+                orderReceivedAlert.addAction(okAction)
+                self.present(orderReceivedAlert, animated: true)
+            }
+        }
+        
+        let cancelAction = UIAlertAction(title: "Cancel", style: .cancel, handler: nil)
+        
+        alertController.addAction(confirmAction)
+        alertController.addAction(cancelAction)
+        
+        present(alertController, animated: true)
+    }
+
+    
+    private func calculateTotalPrice() -> Double {
+        var totalPrice: Double = 0.0
+        for (item, quantity) in orderQuantities {
+            if let price = menuPrices[item] {
+                totalPrice += price * Double(quantity)
+            }
+        }
+        return totalPrice
+    }
+
+}
