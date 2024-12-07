@@ -1,0 +1,118 @@
+//View log of active customer at the table
+
+import UIKit
+import FirebaseDatabase
+
+class CustomerLogViewController: UIViewController, UITableViewDelegate, UITableViewDataSource {
+    
+    private let ref = Database.database().reference() //Reference to the database to fetch data
+
+    // Set up variables we want in the log
+    private var tableNumber: Int
+    private var messages: [(String, Date)]
+    private var orders: [(String, Date, String?)]
+    private var startTime: Date?
+    private let tableView = UITableView()
+    private let totalCost: Double
+
+    //Initialize attributes
+    init(tableNumber: Int, messages: [(String, Date)], orders: [(String, Date, String?)], startTime: Date?, totalCost: Double) {
+            self.tableNumber = tableNumber
+            self.messages = messages
+            self.orders = orders
+            self.startTime = startTime
+            self.totalCost = totalCost
+            super.init(nibName: nil, bundle: nil)
+        }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    //Label for displaying cost
+    private let costLabel: UILabel = {
+        let costLabel = UILabel()
+        costLabel.text = "Current Total: $0.00"
+        costLabel.textAlignment = .center
+        costLabel.font = UIFont.systemFont(ofSize: 24)
+        costLabel.translatesAutoresizingMaskIntoConstraints = false
+        return costLabel
+    }()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Log for Table \(tableNumber)"
+        setupTableView() //Set up constraints for the table
+        observeTotalCost() //Called when view is loaded to get total cost
+        
+        view.addSubview(costLabel)
+        
+        NSLayoutConstraint.activate([
+            costLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            costLabel.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -100)
+        ])
+    }
+
+    private func setupTableView() {
+        view.addSubview(tableView)
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "logCell")
+        
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leftAnchor.constraint(equalTo: view.leftAnchor),
+            tableView.rightAnchor.constraint(equalTo: view.rightAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -50)
+        ])
+    }
+
+    func numberOfSections(in tableView: UITableView) -> Int {
+        return 2 // Messages and Orders
+    }
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        if section == 0 {
+            return messages.count //Section 0 has the customer messages, one for each row
+        } else {
+            return orders.count //Same thing but for orders
+        }
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "logCell", for: indexPath)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "MM/dd/yyyy HH:mm:ss"
+
+        if indexPath.section == 0 {
+            let (message, timestamp) = messages[indexPath.row]
+            cell.textLabel?.text = "\(dateFormatter.string(from: timestamp)): \n\(message)"
+        } else {
+            let (order, timestamp, timeTaken) = orders[indexPath.row]
+            cell.textLabel?.text = "\(dateFormatter.string(from: timestamp)):\n\n\(order)\nOrder Time: \(timeTaken ?? "0:00")"
+        }
+        cell.textLabel?.numberOfLines = 0
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        if section == 0 {
+            return "Messages"
+        } else {
+            return "Orders"
+        }
+    }
+    
+    private func observeTotalCost(){
+        //Fetch total price from database
+        ref.child("tableStatuses").child("table\(tableNumber)").child("totalPrice").observe(.value) { [weak self] snapshot in
+            guard let self = self else { return }
+            let cost = snapshot.value as? Double ?? 0.0 //Assign value fetched to cost
+            DispatchQueue.main.async {
+                self.costLabel.text = "Total Cost: $\(String(format: "%.2f", cost))" //Set the label displaying the cost to this value
+            }
+        }
+    }
+}
