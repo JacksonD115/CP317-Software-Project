@@ -1,0 +1,115 @@
+import UIKit
+import CoreData
+
+class customerLoginController: UIViewController {
+
+    private let codeField: UITextField = {
+        let textField = UITextField()
+        textField.placeholder = "Enter Table Code"
+        textField.borderStyle = .roundedRect
+        return textField
+    }()
+
+    private let loginButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Login", for: .normal)
+        button.backgroundColor = .blue
+        button.setTitleColor(.white, for: .normal)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
+        button.contentEdgeInsets = UIEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        button.addTarget(self, action: #selector(loginButtonTapped), for: .touchUpInside)
+        return button
+    }()
+
+    private let tableCodes: [String: Int] = [
+        "TABLE1CODE": 1,
+        "TABLE2CODE": 2,
+        "TABLE3CODE": 3,
+        "TABLE4CODE": 4,
+        "TABLE5CODE": 5,
+        "TABLE6CODE": 6,
+        "TABLE7CODE": 7,
+        "TABLE8CODE": 8,
+        "TABLE9CODE": 9,
+        "TABLE10CODE": 10
+    ]
+
+    // Managed Object Context from Core Data
+    private let context = (UIApplication.shared.delegate as! AppDelegate).persistentContainer.viewContext
+    
+    private var overviewViewController: overviewViewController?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        setupSubviews()
+
+        overviewViewController = Resturant_Helper.overviewViewController()
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        codeField.text = ""
+        
+    }
+
+    private func setupSubviews() {
+        view.addSubview(codeField)
+        view.addSubview(loginButton)
+
+        codeField.translatesAutoresizingMaskIntoConstraints = false
+        loginButton.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            codeField.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            codeField.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -20),
+            codeField.widthAnchor.constraint(equalToConstant: 200),
+
+            loginButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            loginButton.topAnchor.constraint(equalTo: codeField.bottomAnchor, constant: 20),
+            loginButton.heightAnchor.constraint(equalToConstant: 40),
+            loginButton.widthAnchor.constraint(equalToConstant: 110)
+        ])
+    }
+
+    @objc private func loginButtonTapped() {
+        guard let enteredCode = codeField.text else { return }
+
+        if let tableNumber = tableCodes[enteredCode.uppercased()] {
+            // Update the table status to occupied in Core Data
+            updateTableStatusInCoreData(forTable: tableNumber, isOccupied: true)
+            
+            // Navigate to the table view controller
+            let tableViewController = tableViewController(tableNumber: tableNumber)
+            tableViewController.restaurantID = 667
+            navigationController?.pushViewController(tableViewController, animated: true)
+        } else {
+            let alert = UIAlertController(title: "Invalid Code", message: "Please enter a valid table code.", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+            present(alert, animated: true, completion: nil)
+        }
+    }
+    
+    
+
+    private func updateTableStatusInCoreData(forTable tableNumber: Int, isOccupied: Bool) {
+        let request = NSFetchRequest<NSManagedObject>(entityName: "TableStatus")
+        request.predicate = NSPredicate(format: "tableNumber == %d", tableNumber)
+
+        do {
+            let results = try context.fetch(request)
+            if let tableStatus = results.first {
+                tableStatus.setValue(isOccupied, forKey: "isOccupied")
+                try context.save()
+            }
+        } catch {
+            print("Failed to update table status: \(error)")
+        }
+
+        // Update the shared instance of OverviewViewController
+        overviewViewController?.updateTableStatus(forTable: tableNumber, isOccupied: isOccupied)
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        codeField.text = ""
+    }
+}
