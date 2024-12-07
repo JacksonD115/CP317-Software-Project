@@ -1,0 +1,835 @@
+//Table overview where employees can view and set order statuses
+
+import UIKit
+import FirebaseDatabase
+import CoreData
+
+class overviewViewController: UIViewController, UITableViewDelegate, UITableViewDataSource, TableActionDelegate {
+
+    private let tableView = UITableView()
+    private var ref: DatabaseReference!
+    private var tableStatuses: [TableData] = []
+    private var orderTimers: [Int: Timer] = [:]
+    private var elapsedTime: [Int: Int] = [:]
+    var orderTimes: [NSManagedObject] = []
+    var yellowTimeThreshold: Int = 300
+    var redTimeThreshold: Int = 600
+    var restaurantID: Int = 0
+    
+    let settingsButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Settings", for: .normal)
+        button.addTarget(self, action: #selector(toSettings), for: .touchUpInside)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 18)
+        button.backgroundColor = .systemGray
+        button.setTitleColor(.white, for: .normal)
+        button.contentEdgeInsets = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+        button.layer.cornerRadius = 8
+        button.layer.masksToBounds = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Tables"
+
+        ref = Database.database().reference()
+        initializeTablesIfNeeded()
+        setupTableView()
+        fetchTableStatuses()
+        observeTableStatuses()
+        setupLongPressGesture()
+        setupArchivedLogsButton()
+        fetchTimeData()
+        //processFetchedData()
+        //print(yellowTimeThreshold, redTimeThreshold)
+        
+        view.addSubview(settingsButton)
+        
+        NSLayoutConstraint.activate([
+           settingsButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+           settingsButton.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -20),
+           settingsButton.widthAnchor.constraint(equalToConstant: 100),
+           settingsButton.heightAnchor.constraint(equalToConstant: 50)
+       ])
+    }
+
+    private func setupTableView() {
+        view.addSubview(tableView)
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "cell")
+
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leftAnchor.constraint(equalTo: view.leftAnchor),
+            tableView.rightAnchor.constraint(equalTo: view.rightAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+    }
+
+    private func setupLongPressGesture() {
+        let longPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress))
+        tableView.addGestureRecognizer(longPressGesture)
+    }
+
+    @objc private func handleLongPress(gestureRecognizer: UILongPressGestureRecognizer) {
+        if gestureRecognizer.state == .began {
+            let point = gestureRecognizer.location(in: tableView)
+            if let indexPath = tableView.indexPathForRow(at: point) {
+                let tableStatus = tableStatuses[indexPath.row]
+
+                let alertController = UIAlertController(
+                    title: "Options for Table \(tableStatus.tableNumber)",
+                    message: "What would you like to do?",
+                    preferredStyle: .actionSheet
+                )
+
+                let viewLogAction = UIAlertAction(title: "View Log", style: .default) { [weak self] _ in
+                    guard let self = self else { return }
+                    let logVC = CustomerLogViewController(
+                        tableNumber: tableStatus.tableNumber,
+                        messages: tableStatus.messageHistory,
+                        orders: tableStatus.orderHistory,
+                        startTime: tableStatus.startTime,
+                        totalCost: tableStatus.runningCost
+                    )
+
+                    self.navigationController?.pushViewController(logVC, animated: true)
+                }
+
+                let archiveLogAction = UIAlertAction(title: "Archive and Clear Log", style: .destructive) { [weak self] _ in
+                    self?.archiveAndClearLog(forTable: tableStatus.tableNumber, completion: {})
+                }
+
+                let makeAvailableAction = UIAlertAction(title: "Set Table to Available", style: .default) { [weak self] _ in
+                    guard let self = self else { return }
+                    self.makeAvailableAction(for: tableStatus)
+                }
+
+                let cancelAction = UIAlertAction(title: "Cancel", style: .cancel, handler: nil)
+
+                alertController.addAction(viewLogAction)
+                alertController.addAction(archiveLogAction)
+                alertController.addAction(makeAvailableAction)
+                alertController.addAction(cancelAction)
+
+                present(alertController, animated: true, completion: nil)
+            }
+        }
+    }
+
+    func archiveAndClearLog(forTable tableNumber: Int, completion: @escaping () -> Void) {
+        guard let tableStatus = tableStatuses.first(where: { $0.tableNumber == tableNumber }) else {
+            completion()
+            return
+        }
+
+        // Check if the log is empty
+        if tableStatus.messageHistory.isEmpty && tableStatus.orderHistory.isEmpty {
+            let alertController = UIAlertController(
+                title: "No Log to Archive",
+                message: "There is no log to be archived for Table \(tableNumber).",
+                preferredStyle: .alert
+            )
+            alertController.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+            present(alertController, animated: true, completion: nil)
+            completion()
+            return
+        }
+        
+        ref.child("tableStatuses").child("table\(tableNumber)").child("totalPrice").observeSingleEvent(of: .value) { [weak self] snapshot in
+            guard let self = self else { return }
+            let totalCost = snapshot.value as? Double ?? 0.0
+            
+            let archiveData: [String: Any] = [
+                "tableNumber": tableNumber,
+                "timestamp": Date().timeIntervalSince1970,
+                "totalCost": totalCost,
+                "messages": tableStatus.messageHistory.map { ["message": $0.0, "timestamp": $0.1.timeIntervalSince1970] },
+                "orders": tableStatus.orderHistory.map { ["order": $0.0, "timestamp": $0.1.timeIntervalSince1970, "timeTaken": $0.2 ?? ""] }
+            ]
+
+            // Save to Firebase archive
+            ref.child("archivedLogs").childByAutoId().setValue(archiveData) { [weak self] error, _ in
+                if let error = error {
+                    print("Failed to archive log: \(error)")
+                } else {
+                    // Clear the current log
+                    self?.clearLog(forTable: tableNumber, completion: completion)
+                }
+            }
+        }
+    }
+
+    private func clearLog(forTable tableNumber: Int, completion: @escaping () -> Void) {
+        ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues([
+            "message": "",
+            "order": [],
+            "messageHistory": [],
+            "orderHistory": [],
+            "totalCost": 0.00
+        ]) { error, _ in
+            if let error = error {
+                print("Failed to clear log: \(error)")
+            } else {
+                if let index = self.tableStatuses.firstIndex(where: { $0.tableNumber == tableNumber }) {
+                    self.tableStatuses[index].message = ""
+                    self.tableStatuses[index].order = []
+                    self.tableStatuses[index].messageHistory = []
+                    self.tableStatuses[index].orderHistory = []
+                    self.tableView.reloadData()
+                }
+            }
+            completion()
+        }
+    }
+
+    private func initializeTablesIfNeeded() {
+        let tableNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        
+        ref.child("tableStatuses").observeSingleEvent(of: .value) { snapshot in
+            if !snapshot.exists() {
+                for number in tableNumbers {
+                    let tableData: [String: Any] = [
+                        "tableNumber": number,
+                        "isOccupied": false,
+                        "message": "",
+                        "order": [],
+                        "messageHistory": [],
+                        "orderHistory": [],
+                        "orderReady": false
+                    ]
+                    self.ref.child("tableStatuses").child("table\(number)").setValue(tableData)
+                }
+            }
+        }
+    }
+
+    private func fetchTableStatuses() {
+        ref.child("tableStatuses").observeSingleEvent(of: .value, with: { snapshot in
+            guard let value = snapshot.value as? [String: [String: Any]] else { return }
+            self.tableStatuses = value.compactMap { (key, dict) -> TableData? in
+                guard let tableNumber = dict["tableNumber"] as? Int,
+                      let isOccupied = dict["isOccupied"] as? Bool else { return nil }
+                let message = dict["message"] as? String
+                let order = dict["order"] as? [String]
+                let messageHistory = dict["messageHistory"] as? [[String: Any]] ?? []
+                let orderHistory = dict["orderHistory"] as? [[String: Any]] ?? []
+                let runningCost = dict["runningCost"] as? Double
+
+                let startTimeInterval = dict["startTime"] as? TimeInterval ?? 0
+                let startTime = startTimeInterval != nil ? Date(timeIntervalSince1970: startTimeInterval) : nil
+                let elapsedTime = startTime != nil ? Int(Date().timeIntervalSince1970 - startTimeInterval) : 0
+                self.elapsedTime[tableNumber] = elapsedTime
+                
+                //if let startTime = startTime {
+                    //self.startOrderTimer(forTable: tableNumber)
+                //}
+
+                let messages: [(String, Date)] = messageHistory.compactMap { entry in
+                    if let message = entry["message"] as? String, let timestamp = entry["timestamp"] as? TimeInterval {
+                        return (message, Date(timeIntervalSince1970: timestamp))
+                    }
+                    return nil
+                }
+
+                let orders: [(String, Date, String?)] = orderHistory.compactMap { entry in
+                    if let order = entry["order"] as? String, let timestamp = entry["timestamp"] as? TimeInterval {
+                        let timeTaken = entry["timeTaken"] as? String
+                        return (order, Date(timeIntervalSince1970: timestamp), timeTaken)
+                    }
+                    return nil
+                }
+                
+                let orderStage = dict["orderStage"] as? String ?? "Received"
+                
+                if let startTimeInterval = dict["startTime"] as? TimeInterval {
+                    self.resumeTimer(forTable: tableNumber, fromStartTime: startTimeInterval)
+                } else {
+                    self.elapsedTime[tableNumber] = 0
+                }
+                
+                return TableData(tableNumber: tableNumber, isOccupied: isOccupied, message: message, order: order, messageHistory: messages, orderHistory: orders, startTime: startTime, orderStage: orderStage, runningCost: runningCost ?? 0.0)
+
+            }
+            self.tableStatuses.sort(by: { $0.tableNumber < $1.tableNumber })
+            self.tableView.reloadData()
+        })
+    }
+
+
+    private func observeTableStatuses() {
+        ref.child("tableStatuses").observe(.childChanged, with: { snapshot in
+            guard let dict = snapshot.value as? [String: Any],
+                  let tableNumber = dict["tableNumber"] as? Int else {
+                print("Error parsing snapshot: \(snapshot)")
+                return
+            }
+
+            if let index = self.tableStatuses.firstIndex(where: { $0.tableNumber == tableNumber }) {
+                let previousOrder = self.tableStatuses[index].order
+                let newOrder = dict["order"] as? [String]
+                
+                let previousStatus = self.tableStatuses[index].isOccupied
+                let newStatus = dict["isOccupied"] as? Bool ?? false
+
+                self.tableStatuses[index].isOccupied = newStatus
+                self.tableStatuses[index].message = dict["message"] as? String
+                self.tableStatuses[index].order = dict["order"] as? [String]
+
+                let messageHistory = dict["messageHistory"] as? [[String: Any]] ?? []
+                let orderHistory = dict["orderHistory"] as? [[String: Any]] ?? []
+                let orderStage = dict["orderStage"] as? String ?? "Received"
+
+                let messages: [(String, Date)] = messageHistory.compactMap { entry in
+                    if let message = entry["message"] as? String, let timestamp = entry["timestamp"] as? TimeInterval {
+                        return (message, Date(timeIntervalSince1970: timestamp))
+                    }
+                    return nil
+                }
+
+                let orders: [(String, Date, String?)] = orderHistory.compactMap { entry in
+                    if let order = entry["order"] as? String, let timestamp = entry["timestamp"] as? TimeInterval {
+                        let timeTaken = entry["timeTaken"] as? String
+                        return (order, Date(timeIntervalSince1970: timestamp), timeTaken)
+                    }
+                    return nil
+                }
+                
+                if let index = self.tableStatuses.firstIndex(where: { $0.tableNumber == tableNumber}) {
+                    let previousOrderStage = self.tableStatuses[index].orderStage
+                    self.tableStatuses[index].orderStage = dict["orderStage"] as? String ?? ""
+                    
+                    if self.tableStatuses[index].orderStage != previousOrderStage {
+                        self.tableView.reloadData()
+                    }
+                }
+
+                self.tableStatuses[index].messageHistory = messages
+                self.tableStatuses[index].orderHistory = orders
+                self.tableView.reloadData()
+                
+                if let newOrder = newOrder, !newOrder.isEmpty, previousOrder != newOrder {
+                    let alert = UIAlertController(title: "Order Received", message: "Order Received from table: \(tableNumber)", preferredStyle: .alert)
+                    
+                    alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+                    self.present(alert, animated: true, completion: nil)
+                    
+                    self.startOrderTimer(tableNumber: tableNumber)
+                }
+
+                // Check if the status changed from occupied to available
+                if previousStatus == true && newStatus == false {
+                    let successAlert = UIAlertController(
+                        title: "Table Available",
+                        message: "Table \(tableNumber) is now available.",
+                        preferredStyle: .alert
+                    )
+                    successAlert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+                    self.present(successAlert, animated: true, completion: nil)
+                }
+            } else {
+                print("Error: Table number \(tableNumber) not found in tableStatuses")
+            }
+        })
+    }
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return tableStatuses.count
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath)
+        let tableStatus = tableStatuses[indexPath.row]
+        let statusText = tableStatus.isOccupied ? "Occupied" : "Available"
+        cell.textLabel?.text = "Table \(tableStatus.tableNumber) - \(statusText)"
+        cell.textLabel?.font = .systemFont(ofSize: 14)
+        
+        // Clear previous accessory views
+        cell.accessoryView = nil
+        cell.contentView.subviews.forEach { $0.removeFromSuperview() }
+        
+        var previousButton: UIButton? = nil
+        
+        if let message = tableStatus.message, !message.isEmpty {
+            let messageButton = UIButton(type: .system)
+            messageButton.setImage(UIImage(systemName: "envelope.fill"), for: .normal)
+            messageButton.tintColor = .blue
+            messageButton.tag = indexPath.row
+            messageButton.addTarget(self, action: #selector(handleMessageButtonTap(_:)), for: .touchUpInside)
+            cell.contentView.addSubview(messageButton)
+            messageButton.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                messageButton.trailingAnchor.constraint(equalTo: cell.contentView.trailingAnchor, constant: previousButton == nil ? -50 : -100),
+                messageButton.centerYAnchor.constraint(equalTo: cell.contentView.centerYAnchor),
+                messageButton.widthAnchor.constraint(equalToConstant: 24),
+                messageButton.heightAnchor.constraint(equalToConstant: 24)
+            ])
+            previousButton = messageButton
+        }
+        
+        if let order = tableStatus.order, !order.isEmpty {
+            let orderButton = UIButton(type: .system)
+            orderButton.setImage(UIImage(systemName: "cart.fill"), for: .normal)
+            orderButton.tintColor = .green
+            orderButton.tag = indexPath.row
+            orderButton.addTarget(self, action: #selector(handleOrderButtonTap(_:)), for: .touchUpInside)
+            cell.contentView.addSubview(orderButton)
+            orderButton.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                orderButton.trailingAnchor.constraint(equalTo: cell.contentView.trailingAnchor, constant: -16),
+                orderButton.centerYAnchor.constraint(equalTo: cell.contentView.centerYAnchor),
+                orderButton.widthAnchor.constraint(equalToConstant: 24),
+                orderButton.heightAnchor.constraint(equalToConstant: 24)
+            ])
+        
+        
+            if let elapsed = elapsedTime[tableStatus.tableNumber] {
+                let elapsedTimeLabel = UILabel()
+                elapsedTimeLabel.text = String(format: "Time: %2d:%02d", elapsed / 60, elapsed % 60)
+                elapsedTimeLabel.font = UIFont.systemFont(ofSize: 12)
+                cell.contentView.addSubview(elapsedTimeLabel)
+                elapsedTimeLabel.translatesAutoresizingMaskIntoConstraints = false
+                
+                NSLayoutConstraint.activate([
+                    elapsedTimeLabel.trailingAnchor.constraint(equalTo: orderButton.leadingAnchor, constant: -50),
+                    elapsedTimeLabel.centerYAnchor.constraint(equalTo: cell.contentView.centerYAnchor)
+                ])
+                
+                let stageButton = UIButton(type: .system)
+                stageButton.setTitle(tableStatus.orderStage.capitalized, for: .normal)
+                stageButton.tintColor = .orange
+                stageButton.tag = indexPath.row
+                stageButton.addTarget(self, action: #selector(handleStageButtonTap(_:)), for: .touchUpInside)
+                cell.contentView.addSubview(stageButton)
+                stageButton.translatesAutoresizingMaskIntoConstraints = false
+                
+                NSLayoutConstraint.activate([
+                    stageButton.trailingAnchor.constraint(equalTo: elapsedTimeLabel.leadingAnchor, constant: -20),
+                    stageButton.centerYAnchor.constraint(equalTo: cell.contentView.centerYAnchor),
+                    stageButton.widthAnchor.constraint(equalToConstant: 80),
+                    stageButton.heightAnchor.constraint(equalToConstant: 24)
+                ])
+                
+                let elapsedTimeInSeconds = elapsedTime[tableStatus.tableNumber] ?? 0
+                
+                if elapsedTimeInSeconds < yellowTimeThreshold {
+                    elapsedTimeLabel.textColor = .systemGreen
+                } else if elapsedTimeInSeconds < redTimeThreshold {
+                    elapsedTimeLabel.textColor = .systemYellow
+                } else {
+                    elapsedTimeLabel.textColor = .systemRed
+                }
+            }
+            
+        }
+
+        return cell
+    }
+
+    @objc private func handleMessageButtonTap(_ sender: UIButton) {
+        let tableStatus = tableStatuses[sender.tag]
+        if let message = tableStatus.message, !message.isEmpty {
+            // Append the current message to the message history in Firebase
+            let messageRef = ref.child("tableStatuses").child("table\(tableStatus.tableNumber)").child("messageHistory")
+            
+            messageRef.observeSingleEvent(of: .value) { snapshot in
+                var history = snapshot.value as? [[String: Any]] ?? []
+                
+                // Check if the message is already in the history to prevent duplication
+                let isAlreadyLogged = history.contains { entry in
+                    guard let loggedMessage = entry["message"] as? String else { return false }
+                    return loggedMessage == message
+                }
+                
+                if !isAlreadyLogged {
+                    let timestamp = Date().timeIntervalSince1970
+                    history.append(["message": message, "timestamp": timestamp])
+                    messageRef.setValue(history)
+                }
+            }
+
+            let alertController = UIAlertController(
+                title: "Message from Table \(tableStatus.tableNumber)",
+                message: message,
+                preferredStyle: .alert
+            )
+            let doneAction = UIAlertAction(title: "Done", style: .destructive) { [weak self] _ in
+                self?.clearMessage(forTable: tableStatus.tableNumber)
+            }
+            alertController.addAction(doneAction)
+            alertController.addAction(UIAlertAction(title: "Dismiss", style: .cancel, handler: nil))
+            present(alertController, animated: true, completion: nil)
+        }
+    }
+
+    @objc private func handleOrderButtonTap(_ sender: UIButton) {
+        let tableStatus = tableStatuses[sender.tag]
+        if let order = tableStatus.order {
+            let alertController = UIAlertController(title: "Order from Table \(tableStatus.tableNumber)", message: order.joined(separator: "\n "), preferredStyle: .alert)
+            
+            let doneAction = UIAlertAction(title: "Done", style: .destructive) { [weak self] _ in
+                self?.markOrderAsReady(forTable: tableStatus.tableNumber)
+                self?.clearOrder(forTable: tableStatus.tableNumber)
+            }
+            
+            alertController.addAction(doneAction)
+            alertController.addAction(UIAlertAction(title: "Dismiss", style: .cancel, handler: nil))
+            present(alertController, animated: true, completion: nil)
+        }
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        let tableStatus = tableStatuses[indexPath.row]
+        
+        if let message = tableStatus.message, !message.isEmpty {
+            let alertController = UIAlertController(title: "Message from Table \(tableStatus.tableNumber)", message: message, preferredStyle: .alert)
+            
+            let doneAction = UIAlertAction(title: "Done", style: .destructive) { [weak self] _ in
+                self?.clearMessage(forTable: tableStatus.tableNumber)
+            }
+            
+            let dismissAction = UIAlertAction(title: "Dismiss", style: .cancel, handler: nil)
+            
+            alertController.addAction(doneAction)
+            alertController.addAction(dismissAction)
+            
+            present(alertController, animated: true, completion: nil)
+            
+        } else if let order = tableStatus.order, !order.isEmpty {
+            let alertController = UIAlertController(title: "Order from Table \(tableStatus.tableNumber)", message: order.joined(separator: "\n "), preferredStyle: .alert)
+            
+            let doneAction = UIAlertAction(title: "Done", style: .destructive) { [weak self] _ in
+                self?.markOrderAsReady(forTable: tableStatus.tableNumber)
+                self?.clearOrder(forTable: tableStatus.tableNumber)
+            }
+            
+            let dismissAction = UIAlertAction(title: "Dismiss", style: .cancel, handler: nil)
+            
+            alertController.addAction(doneAction)
+            alertController.addAction(dismissAction)
+            
+            present(alertController, animated: true, completion: nil)
+        }
+    }
+
+    private func clearMessage(forTable tableNumber: Int) {
+        ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues(["message": ""]) { error, _ in
+            if let error = error {
+                print("Failed to clear message: \(error)")
+            } else {
+                if let index = self.tableStatuses.firstIndex(where: { $0.tableNumber == tableNumber }) {
+                    self.tableStatuses[index].message = ""
+                    self.tableView.reloadData()
+                }
+            }
+        }
+    }
+
+    
+    private func clearOrder(forTable tableNumber: Int) {
+        ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues([
+            "order": [],
+            "orderStage": "Received",
+            "startTime": NSNull()
+        ]) { error, _ in
+            if let error = error {
+                print("Failed to clear order: \(error)")
+            } else {
+                if let index = self.tableStatuses.firstIndex(where: { $0.tableNumber == tableNumber}) {
+                    self.tableStatuses[index].order = []
+                    self.tableStatuses[index].orderStage = "Received"
+                    self.tableStatuses[index].startTime = nil
+                    self.stopOrderTimer(forTable: tableNumber)
+                    self.tableView.reloadData()
+                }
+            }
+            
+        }
+    }
+
+    func updateTableStatus(forTable tableNumber: Int, isOccupied: Bool) {
+        guard let ref = ref else {
+            print("Firebase reference (ref) is nil")
+            return
+        }
+        
+        guard !tableStatuses.isEmpty else {
+            print("tableStatuses is empty or nil")
+            return
+        }
+
+        var updates: [String: Any] = ["isOccupied": isOccupied]
+
+        if isOccupied {
+            // Set startTime only when the table is occupied
+            updates["startTime"] = Date().timeIntervalSince1970
+        }
+
+        ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues(updates) { error, _ in
+            if let error = error {
+                print("Failed to update table status: \(error)")
+            } else {
+                if let index = self.tableStatuses.firstIndex(where: { $0.tableNumber == tableNumber }) {
+                    self.tableStatuses[index].isOccupied = isOccupied
+                    if isOccupied {
+                        self.tableStatuses[index].startTime = Date()  // Set startTime locally
+                    }
+                    self.tableView.reloadData()
+                }
+            }
+        }
+    }
+
+
+    private func markOrderAsReady(forTable tableNumber: Int) {
+        ref.child("tableStatuses").child("table\(tableNumber)").observeSingleEvent(of: .value) { [weak self] snapshot in
+            guard let self = self else { return }
+            guard let tableData = snapshot.value as? [String: Any],
+                  let currentOrder = tableData["order"] as? [String],
+                  let startTime = tableData["startTime"] as? TimeInterval else { return }
+            
+            let endTime = Date().timeIntervalSince1970
+            let elapsedTime = Int(endTime - startTime)
+            let elapsedMinutes = elapsedTime / 60
+            let elapsedSeconds = elapsedTime % 60
+            let timeTakenFormatted = String(format: "%d:%02d", elapsedMinutes, elapsedSeconds)
+            
+            // Add the current order to `orderHistory`
+            let currentTimestamp = Date().timeIntervalSince1970
+            let orderEntry: [String: Any] = [
+                "order": currentOrder.joined(separator: ", "),
+                "timestamp": currentTimestamp,
+                "timeTaken": timeTakenFormatted // Represent absence of `timeTaken`
+            ]
+            
+            var orderHistory = tableData["orderHistory"] as? [[String: Any]] ?? []
+            orderHistory.append(orderEntry)
+            
+            let convertedOrderHistory: [(String, Date, String?)] = orderHistory.compactMap { entry in
+                guard let order = entry["order"] as? String,
+                      let timestamp = entry["timestamp"] as? TimeInterval else { return nil }
+                let timeTaken = entry["timeTaken"] as? String
+                return (order, Date(timeIntervalSince1970: timestamp), timeTaken)
+            }
+            
+            // Clear the `order` field and update `orderHistory`
+            self.ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues([
+                "order": [],
+                "orderHistory": orderHistory,
+                "orderReady": true
+            ]) { error, _ in
+                if let error = error {
+                    print("Failed to mark order as ready: \(error)")
+                } else {
+                    if let index = self.tableStatuses.firstIndex(where: { $0.tableNumber == tableNumber }) {
+                        self.tableStatuses[index].order = []
+                        self.tableStatuses[index].orderHistory = convertedOrderHistory
+                        self.tableView.reloadRows(at: [IndexPath(row: index, section: 0)], with: .automatic)
+                    }
+                }
+            }
+        }
+    }
+
+
+    func resetOrderReady(forTable tableNumber: Int) {
+        ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues(["orderReady": false]) { error, _ in
+            if let error = error {
+                print("Failed to reset order ready status: \(error)")
+            } else {
+                print("Order ready status reset for table \(tableNumber).")
+            }
+        }
+    }
+    
+    private func setupArchivedLogsButton() {
+        let archivedLogsButton = UIBarButtonItem(title: "Archived Logs", style: .plain, target: self, action: #selector(showArchivedLogs))
+        navigationItem.rightBarButtonItem = archivedLogsButton
+    }
+
+    @objc private func showArchivedLogs() {
+        let archivedLogsVC = ArchivedLogsViewController()
+        navigationController?.pushViewController(archivedLogsVC, animated: true)
+    }
+
+    private func makeAvailableAction(for tableStatus: TableData) {
+        // Check if the log is empty before trying to archive it
+        if tableStatus.messageHistory.isEmpty && tableStatus.orderHistory.isEmpty {
+            updateTableStatus(forTable: tableStatus.tableNumber, isOccupied: false)
+
+            let successAlert = UIAlertController(
+                title: "Table Available",
+                message: "Table \(tableStatus.tableNumber) is now available.",
+                preferredStyle: .alert
+            )
+            successAlert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+            present(successAlert, animated: true, completion: nil)
+        } else {
+            archiveAndClearLog(forTable: tableStatus.tableNumber) {
+                self.updateTableStatus(forTable: tableStatus.tableNumber, isOccupied: false)
+
+                let successAlert = UIAlertController(
+                    title: "Table Available",
+                    message: "Table \(tableStatus.tableNumber) is now available.",
+                    preferredStyle: .alert
+                )
+                successAlert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+                self.present(successAlert, animated: true, completion: nil)
+            }
+        }
+    }
+
+    // MARK: - TableActionDelegate
+    func archiveLogAndSetTableAvailable(tableNumber: Int) {
+        guard let tableStatus = tableStatuses.first(where: { $0.tableNumber == tableNumber }) else { return }
+
+        if tableStatus.messageHistory.isEmpty && tableStatus.orderHistory.isEmpty {
+            updateTableStatus(forTable: tableNumber, isOccupied: false)
+        } else {
+            archiveAndClearLog(forTable: tableNumber) {
+                self.updateTableStatus(forTable: tableNumber, isOccupied: false)
+            }
+        }
+    }
+    
+    func startOrderTimer(tableNumber: Int) {
+        
+        if let existingTimer = orderTimers[tableNumber] {
+            existingTimer.invalidate()
+        }
+        
+        let startTime = Date().timeIntervalSince1970
+        ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues(["startTime": startTime])
+        
+        /*ref.child("tableStatuses").child("table\(tableNumber)").child("startTime").observeSingleEvent(of: .value) { snapshot in
+            
+            if let startTime = snapshot.value as? TimeInterval {
+                self.resumeTimer(forTable: tableNumber, fromStartTime: startTime)
+            } else {
+                let startTime = Date().timeIntervalSince1970
+                self.ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues(["startTime": startTime])
+                //self.elapsedTime[tableNumber] = 0
+                self.resumeTimer(forTable: tableNumber, fromStartTime: startTime)
+            }
+            
+        } */
+        
+        elapsedTime[tableNumber] = 0
+        resumeTimer(forTable: tableNumber, fromStartTime: startTime)
+        
+    }
+    
+    private func stopOrderTimer(forTable tableNumber: Int){
+        orderTimers[tableNumber]?.invalidate()
+        orderTimers.removeValue(forKey: tableNumber)
+        elapsedTime.removeValue(forKey: tableNumber)
+    }
+    
+    private func progressOrderStage (forTable tableNumber: Int) {
+        guard let index = tableStatuses.firstIndex(where: {$0.tableNumber == tableNumber}) else { return }
+        let currentStage = tableStatuses[index].orderStage
+        let nextStage: String
+        
+        switch currentStage {
+        case "No Active Order": nextStage = "Received"
+        case "Received": nextStage = "Processing"
+        case "Processing": nextStage = "Inspection"
+        case "Inspection": nextStage = "Ready"
+        default: return
+        }
+        
+        ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues(["orderStage": nextStage]){ error, _ in
+            if let error = error {
+                print("Failed to update order stage: \(error)")
+            } else {
+                self.tableStatuses[index].orderStage = nextStage
+                self.tableView.reloadRows(at: [IndexPath(row: index, section: 0)], with: .automatic)
+            }
+        }
+        
+    }
+    
+    @objc private func handleStageButtonTap(_ sender: UIButton) {
+        let tableStatus = tableStatuses[sender.tag]
+        
+        let alertController = UIAlertController(
+            title: "Progress Order Stage", message: "Do you want to progress order for table \(tableStatus.tableNumber) to the next stage?", preferredStyle: .alert)
+        
+        let confirmAction = UIAlertAction(title: "Yes", style: .default) { [weak self] _ in
+            self?.progressOrderStage(forTable: tableStatus.tableNumber)
+        }
+            
+            let cancelAction = UIAlertAction(title: "Cancel", style: .cancel, handler: nil)
+            
+        alertController.addAction(confirmAction)
+        alertController.addAction(cancelAction)
+        
+        present(alertController, animated: true, completion: nil)
+    }
+    
+    private func resumeTimer(forTable tableNumber: Int, fromStartTime startTime: TimeInterval) {
+        let currentTime = Date().timeIntervalSince1970
+        self.elapsedTime[tableNumber] = Int(currentTime - startTime)
+        
+        
+        orderTimers[tableNumber]?.invalidate()
+        
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self = self else { return }
+            self.elapsedTime[tableNumber, default: 0] += 1
+            self.tableView.reloadData()
+        }
+        orderTimers[tableNumber] = timer
+    }
+    
+    func fetchTimeData() {
+        ref.child("restaurants").child("\(restaurantID)").child("yellowTime").observeSingleEvent(of: .value) { [weak self] snapshot, _ in
+            guard let self = self else { return }
+            
+            if let yellowTime = snapshot.value as? Int {
+                self.yellowTimeThreshold = yellowTime
+                print("Yellow time \(yellowTimeThreshold)")
+            } else {
+                print("Failed to fetch yellow time")
+                self.yellowTimeThreshold = 300
+            }
+        }
+        
+        ref.child("restaurants").child("\(restaurantID)").child("redTime").observeSingleEvent(of: .value) { [weak self] snapshot, _ in
+            guard let self = self else { return }
+            
+            if let redTime = snapshot.value as? Int {
+                self.redTimeThreshold = redTime
+                print("Red time \(redTimeThreshold)")
+            } else {
+                print("Failed to fetch yellow time")
+                self.redTimeThreshold = 300
+            }
+        }
+    }
+    
+    func processFetchedData() {
+        for time in orderTimes {
+            if let yellowTime = time.value(forKey: "yellowTime") as? Int,
+               let redTime = time.value(forKey: "redTime") as? Int {
+                print("Yellow Time: \(yellowTime) Red Time: \(redTime)")
+            }
+        }
+    }
+    
+    @objc func toSettings(){
+        let settingsVC = SettingsViewController()
+        settingsVC.restaurantID = restaurantID
+        navigationController?.pushViewController(settingsVC, animated: true)
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(true)
+        fetchTimeData()
+    }
+}
