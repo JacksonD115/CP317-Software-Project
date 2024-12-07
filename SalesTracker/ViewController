@@ -1,0 +1,138 @@
+//
+//  ViewController.swift
+//  SalesTracker
+//
+
+import UIKit
+
+class ViewController: UIViewController {
+    
+    
+    let salesButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("View Sales Bar Graph", for: .normal)
+        button.addTarget(self, action: #selector(toTable), for: .touchUpInside)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 24) // Increased font size
+        button.backgroundColor = .systemGreen
+        button.setTitleColor(.white, for: .normal)
+        button.contentEdgeInsets = UIEdgeInsets(top: 20, left: 20, bottom: 20, right: 20) // Increased padding
+        button.layer.cornerRadius = 10
+        button.layer.masksToBounds = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+    
+    let trendsButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("View Item Trends", for: .normal)
+        button.addTarget(self, action: #selector(toTrends), for: .touchUpInside)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 24)
+        button.backgroundColor = .systemBlue
+        button.setTitleColor(.white, for: .normal)
+        button.contentEdgeInsets = UIEdgeInsets(top: 20, left: 20, bottom: 20, right: 20) // Increased padding
+        button.layer.cornerRadius = 10
+        button.layer.masksToBounds = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+    
+    let employeeButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("View Employee Efficiency", for: .normal)
+        button.addTarget(self, action: #selector(goToEmployeeData), for: .touchUpInside)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 24)
+        button.backgroundColor = .systemCyan
+        button.setTitleColor(.white, for: .normal)
+        button.contentEdgeInsets = UIEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        button.layer.cornerRadius = 10
+        button.layer.masksToBounds = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+    
+    let settingsButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Settings", for: .normal)
+        //button.addTarget(self, action: #selector(toSettings), for: .touchUpInside)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 18)
+        button.backgroundColor = .systemGray
+        button.setTitleColor(.white, for: .normal)
+        button.contentEdgeInsets = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10) // Reduced padding
+        button.layer.cornerRadius = 8
+        button.layer.masksToBounds = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+    
+    let profitButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("View Profit", for: .normal)
+        button.addTarget(self, action: #selector(goToSales), for: .touchUpInside)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 24)
+        button.backgroundColor = .systemCyan
+        button.setTitleColor(.white, for: .normal)
+        button.contentEdgeInsets = UIEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        button.layer.cornerRadius = 10
+        button.layer.masksToBounds = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        view.addSubview(salesButton)
+        view.addSubview(trendsButton)
+        view.addSubview(settingsButton)
+        view.addSubview(employeeButton)
+        view.addSubview(profitButton)
+        
+        NSLayoutConstraint.activate([
+            
+            salesButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            salesButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            salesButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -275),
+            
+            trendsButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            trendsButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            trendsButton.bottomAnchor.constraint(equalTo: salesButton.topAnchor, constant: -40),
+            
+            employeeButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            employeeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            employeeButton.bottomAnchor.constraint(equalTo: trendsButton.topAnchor, constant: -40),
+            
+            settingsButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            settingsButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: -15),
+            settingsButton.heightAnchor.constraint(equalToConstant: 40),
+            settingsButton.widthAnchor.constraint(equalToConstant: 110),
+            
+            profitButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            profitButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            profitButton.bottomAnchor.constraint(equalTo: salesButton.topAnchor, constant: -40),
+            
+        ])
+    }
+
+    @objc func toTable() {
+        let tableVC = SalesAnalyzerViewController()
+        navigationController?.pushViewController(tableVC, animated: true)
+    }
+
+    @objc func toTrends(){
+        let trendsVC = ItemSalesViewController()
+        navigationController?.pushViewController(trendsVC, animated: true)
+    }
+    
+    @objc func goToEmployeeData() {
+        let employeeVC = EmployeeEfficiencyViewController()
+        navigationController?.pushViewController(employeeVC, animated: true)
+    }
+    
+    @objc func goToSales() {
+        let salesVC = ProfitViewController()
+        navigationController?.pushViewController(salesVC, animated: true)
+    }
+
+
+}
+
