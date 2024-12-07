@@ -1,0 +1,221 @@
+import UIKit
+import DGCharts
+import FirebaseDatabase
+
+
+struct OrderDetails {
+    let order: String
+    let timeTaken: String
+    let timestamp: TimeInterval
+    let totalCost: Double
+    
+    init?(dictionary: [String: Any]) {
+        guard let order = dictionary["order"] as? String,
+              let timeTaken = dictionary["timeTaken"] as? String,
+              let timestamp = dictionary["timestamp"] as? TimeInterval else {
+            return nil
+        }
+        self.order = order
+        self.timeTaken = timeTaken
+        self.totalCost = dictionary["totalCost"] as? Double ?? 0.0
+        self.timestamp = timestamp
+    }
+}
+
+struct LogWithOrders {
+    let timestamp: TimeInterval
+    let orders: [OrderDetails]
+    
+    init?(dictionary: [String: Any]) {
+        guard let orderArray = dictionary["orders"] as? [[String: Any]],
+              let timestamp = dictionary["timestamp"] as? TimeInterval else {
+            return nil
+        }
+        self.timestamp = timestamp
+        self.orders = orderArray.compactMap{ OrderDetails(dictionary: $0)}
+    }
+}
+
+class EmployeeEfficiencyViewController: UIViewController {
+    
+    private let ref = Database.database().reference()
+    private var averageTimeData = [String: Double]()
+    private var lineChartView: LineChartView!
+    private var dates: [String] = []
+    private var updateTimer: Timer?
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Average Order Time by Day (minutes)"
+        
+        lineChartView = LineChartView()
+        lineChartView.translatesAutoresizingMaskIntoConstraints = false
+        lineChartView.noDataText = "Fetching data..."
+        lineChartView.noDataTextColor = .gray
+        lineChartView.noDataFont = .systemFont(ofSize: 16, weight: .medium)
+        view.addSubview(lineChartView)
+        
+        NSLayoutConstraint.activate([
+            lineChartView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            lineChartView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            lineChartView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            lineChartView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        ])
+        
+        updateTimer = Timer.scheduledTimer(timeInterval: 1.0, target: self, selector: #selector(fetchAndUpdateChart), userInfo: nil, repeats: true)
+        
+        fetchArchivedLogs { logs in
+            self.averageTimeData = self.calculateAverageTime(logs: logs)
+            self.dates = self.getPastWeeksDates()
+            self.updateChartWithData()
+        }
+    }
+    
+    @objc func fetchAndUpdateChart() {
+        fetchArchivedLogs { logs in
+            self.averageTimeData = self.calculateAverageTime(logs: logs)
+            self.updateChartWithData()
+        }
+    }
+    
+    func fetchArchivedLogs(completion: @escaping ([LogWithOrders]) -> Void) {
+        ref.child("archivedLogs").observeSingleEvent(of: .value) { snapshot in
+            guard let logsDict = snapshot.value as? [String: [String: Any]] else {
+                print("No logs found")
+                completion([])
+                return
+            }
+            let logs = logsDict.compactMap { (key, dict) -> LogWithOrders? in
+                return LogWithOrders(dictionary: dict)
+            }
+            //print("Logs fetched: \(logs)")
+            completion(logs)
+        }
+    }
+    
+    func calculateAverageTime(logs: [LogWithOrders]) -> [String: Double] {
+        var timeData = [String: [Double]]()
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
+        let calender = Calendar.current
+        let week = calender.date(byAdding: .day, value: -7, to: Date())!
+        
+        logs.forEach { log in
+            let date = dateFormatter.string(from: Date(timeIntervalSince1970: log.timestamp))
+            let logDate = dateFormatter.date(from: date) ?? Date()
+            
+            if logDate >= week {
+                log.orders.forEach { order in
+                    if let timeInMinutes = timeStringToMinutes(order.timeTaken) {
+                        timeData[date, default: []].append(timeInMinutes)
+                        let formattedTime = formatMinutesToTimeString(timeInMinutes)
+                        
+                    }
+                }
+            }
+
+        }
+        
+        let averagedData = timeData.mapValues { times in
+                let total = times.reduce(0, +)
+                return total / Double(times.count)
+            }
+        //print("Calculated Average Time Data: \(averagedData)")
+        return averagedData
+    }
+    
+    func getPastWeeksDates() -> [String] {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
+        let calender = Calendar.current
+        var dates = [String]()
+        
+        for i in 0..<7 {
+            if let date = calender.date(byAdding: .day, value: -i, to: Date()) {
+                let dateString = dateFormatter.string(from: date)
+                dates.append(dateString)
+            }
+        }
+        
+        return dates.reversed()
+    }
+    
+    func timeStringToSeconds(_ time: String) -> Double? {
+        let components = time.split(separator: ":").compactMap { Double($0) }
+        guard components.count == 2 else { return nil }
+        return (components[0] * 3600) + (components[1] * 60)
+    }
+    
+    func timeStringToMinutes(_ time: String) -> Double? {
+        let components = time.split(separator: ":").compactMap{ Double($0) }
+        guard components.count == 2 else { return nil }
+        let totalMinutes = components[0] * 60 + components[1]
+        return totalMinutes
+    }
+    
+    func formatMinutesToTimeString(_ minutes: Double) -> String {
+        let totalSeconds = Int(minutes * 60)
+        let minutesPart = totalSeconds / 60
+        let secondsPart = totalSeconds % 60
+        return String(format: "%d:%02d", minutesPart, secondsPart)
+    }
+    
+    func getSortedDates(from logs: [LogWithOrders]) -> [String] {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
+        let calender = Calendar.current
+        let week = calender.date(byAdding: .day, value: -7, to: Date())!
+        
+        let datesSet = Set(logs.map { dateFormatter.string(from: Date(timeIntervalSince1970: $0.timestamp)) })
+        
+        let filteredDates = datesSet.compactMap { dateFormatter.date(from: $0) }
+            .filter{ $0 >= week }.sorted().map { dateFormatter.string(from: $0)}
+        
+        return filteredDates
+    }
+    
+    func updateChartWithData() {
+        var dataEntries: [ChartDataEntry] = []
+        
+        for (index, date) in dates.enumerated() {
+            let avgTime = averageTimeData[date] ?? 0.0
+            let dataEntry = ChartDataEntry(x: Double(index), y: avgTime / 60.0)
+            dataEntries.append(dataEntry)
+        }
+        
+        let chartDataSet = LineChartDataSet(entries: dataEntries, label: "Average Order Time by Day (minutes)")
+        chartDataSet.colors = [.systemBlue]
+        chartDataSet.valueFont = .systemFont(ofSize: 10)
+        chartDataSet.circleRadius = 4.0
+        chartDataSet.circleColors = [.systemBlue]
+        chartDataSet.lineWidth = 1.0
+        chartDataSet.valueFormatter = MinutesSecondsDataValueFormatter()
+        
+        let chartData = LineChartData(dataSet: chartDataSet)
+        lineChartView.data = chartData
+        
+        lineChartView.xAxis.valueFormatter = IndexAxisValueFormatter(values: dates)
+        lineChartView.xAxis.granularity = 1
+        lineChartView.xAxis.labelPosition = .bottom
+        lineChartView.xAxis.labelRotationAngle = -45
+        
+        lineChartView.leftAxis.axisMinimum = 0
+        lineChartView.leftAxis.valueFormatter = DefaultAxisValueFormatter(decimals: 0)
+        
+        lineChartView.rightAxis.enabled = false
+    }
+}
+
+class MinutesSecondsDataValueFormatter: ValueFormatter {
+    func stringForValue(_ value: Double, entry: ChartDataEntry, dataSetIndex: Int, viewPortHandler: ViewPortHandler?) -> String {
+        let totalSeconds = Int(value * 60) // Convert from minutes to seconds
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+}
