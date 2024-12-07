@@ -1,0 +1,19 @@
+import Foundation
+
+struct TableData {
+    var tableNumber: Int
+    var isOccupied: Bool
+    var message: String?
+    var order: [String]?
+    var messageHistory: [(String, Date)]
+    var orderHistory: [(String, Date, String?)]
+    var startTime: Date?
+    var endTime: Date?
+    var orderStage: String
+    var runningCost: Double
+}
+
+struct TableAvailability {
+    var tableNumber: Int
+    var isOccupied: Bool
+}
