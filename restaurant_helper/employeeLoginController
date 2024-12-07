@@ -1,0 +1,66 @@
+import UIKit
+
+class employeeLoginController: UIViewController {
+    
+    private let correctPassword = "Mcdonalds667"
+    private let passwords: [String] = ["Mcdonalds667", "Mcdonalds778", "Mcdonalds123"]
+
+    private let passwordField: UITextField = {
+        let textField = UITextField()
+        textField.placeholder = "Enter Password"
+        textField.isSecureTextEntry = true
+        textField.borderStyle = .roundedRect
+        return textField
+    }()
+
+    private let loginButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Login", for: .normal)
+        button.addTarget(self, action: #selector(loginButtonTapped), for: .touchUpInside)
+        return button
+    }()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        setupSubviews()
+    }
+
+    private func setupSubviews() {
+        // Add and position the password field and login button
+        view.addSubview(passwordField)
+        view.addSubview(loginButton)
+
+        // Setup layout constraints
+        passwordField.translatesAutoresizingMaskIntoConstraints = false
+        loginButton.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            passwordField.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            passwordField.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -20),
+            passwordField.widthAnchor.constraint(equalToConstant: 200),
+
+            loginButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            loginButton.topAnchor.constraint(equalTo: passwordField.bottomAnchor, constant: 20)
+        ])
+    }
+
+    @objc private func loginButtonTapped() {
+        guard let enteredPassword = passwordField.text else { return }
+
+        if enteredPassword == correctPassword {
+            let nextViewController = overviewViewController()
+            nextViewController.restaurantID = 667
+            navigationController?.pushViewController(nextViewController, animated: true)
+        } else {
+            // Show an alert if the password is incorrect
+            let alert = UIAlertController(title: "Incorrect Password", message: "Please try again.", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+            present(alert, animated: true, completion: nil)
+        }
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        passwordField.text = ""
+    }
+}
