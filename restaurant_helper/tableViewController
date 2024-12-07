@@ -1,0 +1,504 @@
+//Customer home page
+
+import UIKit
+import FirebaseDatabase
+
+protocol TableActionDelegate: AnyObject {
+    func archiveLogAndSetTableAvailable(tableNumber: Int)
+    //func startOrderTimer(tableNumber: Int)
+}
+
+class tableViewController: UIViewController {
+    
+    private var runningCost: Double = 0.0
+    var restaurantID = 0
+    
+    private func updateFirebaseForTable(tableNumber: Int, elapsedTime: Int) {
+        let ref = Database.database().reference()
+        ref.child("tableStatuses").child("table\(tableNumber)").child("elapsedTime").setValue(elapsedTime)
+    }
+    
+
+    private var tableNumber: Int
+    private let ref = Database.database().reference()
+    weak var delegate: TableActionDelegate?
+
+    init(tableNumber: Int) {
+        self.tableNumber = tableNumber
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Table \(tableNumber)"
+        
+        navigationItem.hidesBackButton = true
+
+        // Mark the table as occupied when the view is loaded and initialize orderReady status
+        updateTableStatus(isOccupied: true, hasActiveOrder: false)
+        initializeOrderReadyStatus()
+        setupUI()
+        observeOrderReadyStatus()
+        observeOrderStage()
+        observeRunningCost()
+    }
+    
+    private let orderStatusLabel: UILabel = {
+        let orderStatusLabel = UILabel()
+        orderStatusLabel.text = "Order Status: No Active Order"
+        orderStatusLabel.textAlignment = .center
+        orderStatusLabel.font = UIFont.systemFont(ofSize: 24)
+        orderStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        return orderStatusLabel
+    }()
+    
+    private let runningCostLabel: UILabel = {
+        let runningCostLabel = UILabel()
+        runningCostLabel.text = "Total Cost: $0.00"
+        runningCostLabel.textAlignment = .center
+        runningCostLabel.font = UIFont.systemFont(ofSize: 24)
+        runningCostLabel.translatesAutoresizingMaskIntoConstraints = false
+        return runningCostLabel
+    }()
+
+    private func setupUI() {
+        let label = UILabel()
+        label.text = "You are seated at Table \(tableNumber)"
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        
+        let actionLabel = UILabel()
+        actionLabel.text = "What would you like to do?"
+        actionLabel.textAlignment = .center
+        actionLabel.translatesAutoresizingMaskIntoConstraints = false
+        
+        let leaveLabel = UILabel()
+        leaveLabel.text = "Please Press Leave Table When Done"
+        leaveLabel.textAlignment = .center
+        leaveLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let leaveButton = UIButton(type: .system)
+        leaveButton.setTitle("Leave Table", for: .normal)
+        leaveButton.addTarget(self, action: #selector(leaveTableTapped), for: .touchUpInside)
+        leaveButton.backgroundColor = .systemRed
+        leaveButton.setTitleColor(.white, for: .normal)
+        leaveButton.layer.cornerRadius = 8
+        leaveButton.translatesAutoresizingMaskIntoConstraints = false
+
+        let messageButton = UIButton(type: .system)
+        messageButton.setTitle("Send Message To Kitchen", for: .normal)
+        messageButton.titleLabel?.lineBreakMode = .byWordWrapping
+        messageButton.titleLabel?.textAlignment = .center
+        messageButton.addTarget(self, action: #selector(sendMessageTapped), for: .touchUpInside)
+        messageButton.backgroundColor = .systemBlue
+        messageButton.setTitleColor(.white, for: .normal)
+        messageButton.layer.cornerRadius = 8
+        messageButton.translatesAutoresizingMaskIntoConstraints = false
+
+        let orderButton = UIButton(type: .system)
+        orderButton.setTitle("Order from Menu", for: .normal)
+        orderButton.addTarget(self, action: #selector(orderFromMenuTapped), for: .touchUpInside)
+        orderButton.backgroundColor = .systemGreen
+        orderButton.setTitleColor(.white, for: .normal)
+        orderButton.layer.cornerRadius = 8
+        orderButton.translatesAutoresizingMaskIntoConstraints = false
+        
+        let payButton = UIButton(type: .system)
+        payButton.setTitle("Pay For Order", for: .normal)
+        payButton.addTarget(self, action: #selector(paymentButtonTapped), for: .touchUpInside)
+        payButton.backgroundColor = .systemTeal //Change this later
+        payButton.setTitleColor(.white, for: .normal)
+        payButton.layer.cornerRadius = 8
+        payButton.translatesAutoresizingMaskIntoConstraints = false
+        
+
+        view.addSubview(label)
+        view.addSubview(leaveButton)
+        view.addSubview(messageButton)
+        view.addSubview(orderButton)
+        view.addSubview(leaveLabel)
+        view.addSubview(orderStatusLabel)
+        view.addSubview(actionLabel)
+        view.addSubview(runningCostLabel)
+        view.addSubview(payButton)
+
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
+            
+            actionLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            actionLabel.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 40),
+            
+            orderButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            orderButton.topAnchor.constraint(equalTo: actionLabel.bottomAnchor, constant: 20),
+            orderButton.heightAnchor.constraint(equalToConstant: 60),
+            orderButton.widthAnchor.constraint(equalToConstant: 165),
+            
+            messageButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            messageButton.topAnchor.constraint(equalTo: orderButton.bottomAnchor, constant: 20),
+            messageButton.heightAnchor.constraint(equalToConstant: 60),
+            messageButton.widthAnchor.constraint(equalToConstant: 160),
+            
+            leaveButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            leaveButton.topAnchor.constraint(equalTo: messageButton.bottomAnchor, constant: 20),
+            leaveButton.heightAnchor.constraint(equalToConstant: 60),
+            leaveButton.widthAnchor.constraint(equalToConstant: 165),
+            
+            orderStatusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            orderStatusLabel.bottomAnchor.constraint(equalTo: leaveLabel.topAnchor, constant: -150),
+            
+            leaveLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            leaveLabel.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -30),
+            
+            runningCostLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            runningCostLabel.topAnchor.constraint(equalTo: orderStatusLabel.bottomAnchor, constant: 75),
+            
+            payButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            payButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 75),
+            payButton.widthAnchor.constraint(equalToConstant: 100),
+            payButton.heightAnchor.constraint(equalToConstant: 50)
+        ])
+    }
+
+    private func initializeOrderReadyStatus() {
+        ref.child("tableStatuses").child("table\(tableNumber)").child("orderReady").setValue(false) { error, _ in
+            if let error = error {
+                print("Failed to initialize orderReady status: \(error)")
+            }
+        }
+    }
+
+    private func observeOrderReadyStatus() {
+        ref.child("tableStatuses").child("table\(tableNumber)").child("orderReady").observe(.value) { [weak self] snapshot in
+            if let orderReady = snapshot.value as? Bool, orderReady {
+                self?.showOrderReadyAlert()
+                self?.ref.child("tableStatuses").child("table\(self?.tableNumber ?? 0)").child("hasActiveOrder").setValue(false)
+                // Reset the orderReady status to avoid showing the alert multiple times
+                self?.ref.child("tableStatuses").child("table\(self?.tableNumber ?? 0)").child("orderReady").setValue(false)
+            }
+        }
+    }
+    
+    private func observeOrderStage() {
+            ref.child("tableStatuses").child("table\(tableNumber)").child("orderStage").observe(.value) { [weak self] snapshot in
+                guard let self = self else { return }
+                
+                if let orderStage = snapshot.value as? String {
+                    DispatchQueue.main.async {
+                        self.orderStatusLabel.text = "Order Status: \(orderStage)"
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        self.orderStatusLabel.text = "No Active Order"
+                    }
+                }
+                
+                self.ref.child("tableStatuses").child("table\(self.tableNumber)").child("hasActiveOrder").observeSingleEvent(of: .value) { [weak self] snapshot in
+                    
+                    guard let self = self else { return }
+                    
+                    if let hasActiveOrder = snapshot.value as? Bool, !hasActiveOrder {
+                        DispatchQueue.main.async {
+                            self.orderStatusLabel.text = "Order Status: No Active Order"
+                        }
+                    }
+                }
+            }
+        }
+    
+
+    private func showOrderReadyAlert() {
+        let alertController = UIAlertController(title: "Order Ready", message: "Your order is ready!", preferredStyle: .alert)
+        let okAction = UIAlertAction(title: "OK", style: .default, handler: nil)
+        self.orderStatusLabel.text = "Order Status: No Active Order"
+        alertController.addAction(okAction)
+        present(alertController, animated: true, completion: nil)
+    }
+
+    @objc private func leaveTableTapped() {
+        // Show a confirmation alert before proceeding
+        let confirmationAlert = UIAlertController(
+            title: "Leave Table",
+            message: "Are you sure you want to leave the table?",
+            preferredStyle: .alert
+        )
+        
+        let confirmAction = UIAlertAction(title: "Yes", style: .destructive) { [weak self] _ in
+            self?.confirmLeaveTableTapped()
+        }
+        
+        let cancelAction = UIAlertAction(title: "No", style: .cancel, handler: nil)
+        
+        confirmationAlert.addAction(confirmAction)
+        confirmationAlert.addAction(cancelAction)
+        
+        present(confirmationAlert, animated: true, completion: nil)
+    }
+
+    private func confirmLeaveTableTapped() {
+        // Fetch the current log data
+        ref.child("tableStatuses").child("table\(tableNumber)").observeSingleEvent(of: .value, with: { [weak self] snapshot in
+            guard let self = self, let tableData = snapshot.value as? [String: Any] else {
+                return
+            }
+
+            let messageHistory = tableData["messageHistory"] as? [[String: Any]] ?? []
+            let orderHistory = tableData["orderHistory"] as? [[String: Any]] ?? []
+            let hasPaid = tableData["hasPaid"] as? Bool ?? false
+            
+            if !hasPaid {
+                let alert = UIAlertController(title: "Payment Pending",
+                            message: "It appears you haven't paid. Get ahold of a staff member if you beleive this is a mistake",
+                                          preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                self.present(alert, animated: true, completion: nil)
+                return
+            }
+
+            // Check if the log is empty
+            if messageHistory.isEmpty && orderHistory.isEmpty {
+                // Simply set the table to unoccupied without archiving the log
+                self.updateTableStatus(isOccupied: false, hasActiveOrder: false)
+                
+                self.ref.child("tableStatuses").child("table\(self.tableNumber)").updateChildValues(["totalPrice": 0.00]) { error, _ in
+                    if let error = error {
+                        print("Failed to reset totalPrice: \(error)")
+                    }
+                }
+                
+                let successAlert = UIAlertController(
+                    title: "Table Left",
+                    message: "Thank you for eating at McDonald's today!",
+                    preferredStyle: .alert
+                )
+                successAlert.addAction(UIAlertAction(title: "OK", style: .default) { _ in
+                    self.navigationController?.popViewController(animated: true)
+                })
+                self.present(successAlert, animated: true, completion: nil)
+            } else {
+                // Archive the log and then set the table to unoccupied
+                self.archiveAndClearLog(forTable: self.tableNumber)
+                {
+                    self.updateTableStatus(isOccupied: false, hasActiveOrder: false)
+                    
+                    self.ref.child("tableStatuses").child("table\(self.tableNumber)").updateChildValues(["hasPaid": true]) { error, _ in
+                        if let error = error {
+                            print("Failed to update paid status \(error)")
+                        }
+                    }
+                    
+                    let successAlert = UIAlertController(
+                        title: "Table Left",
+                        message: "Thank you for eating at McDonald's today!",
+                        preferredStyle: .alert
+                    )
+                    successAlert.addAction(UIAlertAction(title: "OK", style: .default) { _ in
+                        self.navigationController?.popViewController(animated: true)
+                    })
+                    self.present(successAlert, animated: true, completion: nil)
+                }
+            }
+        })
+    }
+
+
+    private func archiveAndClearLog(forTable tableNumber: Int, completion: @escaping () -> Void) {
+        // Fetch the current log data, including totalPrice
+        ref.child("tableStatuses").child("table\(tableNumber)").observeSingleEvent(of: .value) { [weak self] snapshot in
+            guard let self = self, let tableData = snapshot.value as? [String: Any] else {
+                completion()
+                return
+            }
+            
+            let totalCost = tableData["totalPrice"] as? Double ?? 0.0
+            let startTime = tableData["startTime"] as? TimeInterval ?? 0
+            let messageHistory = tableData["messageHistory"] as? [[String: Any]] ?? []
+            let orderHistory = tableData["orderHistory"] as? [[String: Any]] ?? []
+
+            let archiveData: [String: Any] = [
+                "tableNumber": tableNumber,
+                "totalCost": totalCost,
+                "timestamp": Date().timeIntervalSince1970,
+                "startTime": startTime,
+                "endTime": Date().timeIntervalSince1970,
+                "messages": messageHistory,
+                "orders": orderHistory
+            ]
+            
+            // Save to Firebase archive
+            self.ref.child("archivedLogs").childByAutoId().setValue(archiveData) { error, _ in
+                if let error = error {
+                    print("Failed to archive log: \(error)")
+                } else {
+                    self.ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues(["totalPrice": 0.0]) { error, _ in
+                        if let error = error {
+                            print("Failed to reset totalPrice: \(error)")
+                        }
+                    }
+                    self.clearLog(forTable: tableNumber, completion: completion)
+                }
+            }
+        }
+    }
+
+
+
+    private func clearLog(forTable tableNumber: Int, completion: @escaping () -> Void) {
+        ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues([
+            "message": "",
+            "order": [],
+            "messageHistory": [],
+            "orderHistory": [],
+            "hasPaid": false
+        ]) { error, _ in
+            if let error = error {
+                print("Failed to clear log: \(error)")
+            }
+            completion()
+            
+        }
+    }
+
+    @objc private func sendMessageTapped() {
+        let alertController = UIAlertController(title: "Send Message", message: "Enter your message to the employee", preferredStyle: .alert)
+        
+        alertController.addTextField { textField in
+            textField.placeholder = "Type your message here..."
+        }
+        
+        let sendAction = UIAlertAction(title: "Send", style: .default) { [weak self] _ in
+            guard let self = self, let message = alertController.textFields?.first?.text else { return }
+            self.saveMessage(message)
+        }
+        
+        let cancelAction = UIAlertAction(title: "Cancel", style: .cancel, handler: nil)
+        
+        alertController.addAction(sendAction)
+        alertController.addAction(cancelAction)
+        
+        present(alertController, animated: true, completion: nil)
+    }
+
+    private func saveMessage(_ message: String) {
+        ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues(["message": message]) { error, _ in
+            if let error = error {
+                print("Failed to send message: \(error)")
+            }
+        }
+    }
+
+    private func updateTableStatus(isOccupied: Bool, hasActiveOrder: Bool) {
+        var updates: [String: Any] = ["isOccupied": isOccupied]
+        var updateActiveOrder: [String: Any] = ["hasActiveOrder": hasActiveOrder]
+
+        if isOccupied {
+            updates["startTime"] = Date().timeIntervalSince1970
+        } else {
+            updates["endTime"] = Date().timeIntervalSince1970
+        }
+
+        ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues(updates) { error, _ in
+            if let error = error {
+                print("Failed to update table status: \(error)")
+            }
+        }
+        
+        ref.child("tableStatuses").child("table\(tableNumber)").updateChildValues(updateActiveOrder) { error, _ in
+            if let error = error {
+                print("Failed to update table status: \(error)")
+            }
+        }
+    }
+
+
+
+    @objc private func orderFromMenuTapped() {
+        // Reset orderReady status when placing a new order
+        //resetOrderReadyStatus()
+        
+        ref.child("tableStatuses").child("table\(tableNumber)").child("hasActiveOrder").observeSingleEvent(of: .value) { snapshot in
+            if let hasActiveOrder = snapshot.value as? Bool, hasActiveOrder {
+                let alert = UIAlertController(title: "Order in progress", message: "You already have an active order. Please wait to recieve it before starting another one", preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+                self.present(alert, animated: true, completion: nil)
+            } else {
+                let menuVC = MenuViewController(tableNumber: self.tableNumber)
+                self.navigationController?.pushViewController(menuVC, animated: true)
+            }
+        }
+    }
+    
+    @objc private func paymentButtonTapped() {
+        
+        let confirmationAlert = UIAlertController(title: "Ready to pay?",
+        message: "Are you sure you reay to pay? This means that you are done ordering.", preferredStyle: .alert)
+        
+        let confirmAction = UIAlertAction(title: "Yes", style: .destructive) { [weak self] _ in
+            self?.goToPayment()
+        }
+        
+        let cancelAction = UIAlertAction(title: "No", style: .cancel, handler: nil)
+        
+        confirmationAlert.addAction(confirmAction)
+        confirmationAlert.addAction(cancelAction)
+        
+        present(confirmationAlert, animated: true, completion: nil)
+    }
+    
+    @objc func goToPayment() {
+        let paymentVC = PaymentViewController(tableNumber: self.tableNumber)
+        paymentVC.restaurantID = restaurantID
+        self.navigationController?.pushViewController(paymentVC, animated: true)
+    }
+
+    private func resetOrderReadyStatus() {
+        ref.child("tableStatuses").child("table\(tableNumber)").child("orderReady").setValue(false) { error, _ in
+            if let error = error {
+                print("Failed to reset orderReady status: \(error)")
+            }
+        }
+    }
+
+    // Override the behavior of the back button
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+
+        // Check if the view is disappearing because the user is trying to go back
+        if isMovingFromParent {
+            navigationController?.setNavigationBarHidden(false, animated: false)
+            viewWillAppear(animated)
+        }
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        
+        
+        ref.child("tableStatuses").child("table\(tableNumber)").child("hasActiveOrder").observeSingleEvent(of: .value) { [weak self] snapshot in
+            guard let self = self else { return }
+            
+            if let hasActiveOrder = snapshot.value as? Bool, !hasActiveOrder {
+                DispatchQueue.main.async {
+                    self.orderStatusLabel.text = "Order Status: No Active Order"
+                }
+            } else {
+                self.orderStatusLabel.text = "Order Status: Received"
+            }
+        }
+    }
+    
+    private func observeRunningCost(){
+        ref.child("tableStatuses").child("table\(tableNumber)").child("totalPrice").observe(.value) { [weak self] snapshot in
+            guard let self = self else { return }
+            let cost = snapshot.value as? Double ?? 0.0
+            DispatchQueue.main.async {
+                self.runningCostLabel.text = "Total Cost: $\(String(format: "%.2f", cost))"
+            }
+        }
+    }
+}
