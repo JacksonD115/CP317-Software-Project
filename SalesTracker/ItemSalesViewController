@@ -1,0 +1,239 @@
+//Line graph view of the items sold
+
+import UIKit
+import DGCharts
+import FirebaseDatabase
+
+class ItemSalesViewController: UIViewController, UITableViewDelegate, UITableViewDataSource {
+    
+    private let ref = Database.database().reference()
+    private var salesData = [String: [String: Int]]() // [ItemName: [Date: Count]]
+    
+    private var lineChartView: LineChartView!
+    private var tableView: UITableView!
+    private var compareLabel: UILabel!
+    private var selectedItems: [String] = []
+    private var dates: [String] = []
+    
+    // List of specific items to track
+    private let itemsToTrack: [String] = [
+        "French Fries", "Chicken McNuggets", "Salad", "Coca-Cola", "Sprite",
+        "Milkshake", "Big Mac", "Quarter Pounder with Cheese", "McChicken"
+    ]
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Item Sales"
+        
+        // Initialize the line chart view
+        lineChartView = LineChartView()
+        lineChartView.translatesAutoresizingMaskIntoConstraints = false
+        lineChartView.noDataText = "Select items from the table to compare"
+        lineChartView.noDataTextColor = .gray
+        lineChartView.noDataFont = .systemFont(ofSize: 16, weight: .medium)
+        view.addSubview(lineChartView)
+        
+        compareLabel = UILabel()
+        compareLabel.translatesAutoresizingMaskIntoConstraints = false
+        compareLabel.text = "Select Items To Compare"
+        compareLabel.textAlignment = .center
+        compareLabel.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        view.addSubview(compareLabel)
+        
+        // Initialize the table view for item selection
+        tableView = UITableView()
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.allowsMultipleSelection = true
+        tableView.layer.borderWidth = 1.0
+        tableView.layer.borderColor = UIColor.black.cgColor
+        view.addSubview(tableView)
+        
+        // Set up constraints for the table view and line chart view
+        NSLayoutConstraint.activate([
+            compareLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 5),
+            compareLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            compareLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            
+            tableView.topAnchor.constraint(equalTo: compareLabel.bottomAnchor, constant: 20),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            tableView.heightAnchor.constraint(equalToConstant: 200),
+            
+            lineChartView.topAnchor.constraint(equalTo: tableView.bottomAnchor, constant: 20),
+            lineChartView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            lineChartView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            lineChartView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        ])
+        
+        fetchArchivedLogs { logs in
+            self.salesData = self.analyzeSalesData(logs: logs)
+            self.dates = self.getSortedDates(from: logs)
+        }
+    }
+    
+    // Fetching the archived logs from Firebase
+    func fetchArchivedLogs(completion: @escaping ([ArchivedLog]) -> Void) {
+        ref.child("archivedLogs").observeSingleEvent(of: .value) { snapshot in
+            guard let logsDict = snapshot.value as? [String: [String: Any]] else {
+                print("No logs found in Firebase.")
+                completion([])
+                return
+            }
+            
+            let logs = logsDict.compactMap { (key, dict) -> ArchivedLog? in
+                return ArchivedLog(dictionary: dict)
+            }
+            completion(logs)
+        }
+    }
+    
+    // Analyzing the fetched logs to count the sales of each item per day
+    func analyzeSalesData(logs: [ArchivedLog]) -> [String: [String: Int]] {
+        var salesData = [String: [String: Int]]()
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
+        logs.forEach { log in
+            let date = dateFormatter.string(from: Date(timeIntervalSince1970: log.timestamp))
+            
+            log.orders.forEach { order in
+                itemsToTrack.forEach { item in
+                    if let range = order.range(of: "\(item) x") {
+                        let quantityStartIndex = order.index(range.upperBound, offsetBy: 0)
+                        let quantityString = order[quantityStartIndex...].components(separatedBy: " ").first
+                        if let quantity = Int(quantityString ?? "1") {
+                            salesData[item, default: [:]][date, default: 0] += quantity
+                        }
+                    }
+                }
+            }
+        }
+        
+        return salesData
+    }
+    
+    // Get all the dates in sorted order
+    func getSortedDates(from logs: [ArchivedLog]) -> [String] {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
+        let datesSet = Set(logs.map { dateFormatter.string(from: Date(timeIntervalSince1970: $0.timestamp)) })
+        return Array(datesSet).sorted()
+    }
+    
+    // Update the line chart with data
+    func updateChartWithData() {
+        var dataSets: [LineChartDataSet] = []
+        
+        for selectedItem in selectedItems {
+            guard let itemSales = salesData[selectedItem] else { continue }
+            
+            var dataEntries: [ChartDataEntry] = []
+            
+            for (index, date) in dates.enumerated() {
+                let itemCount = itemSales[date] ?? 0
+                let dataEntry = ChartDataEntry(x: Double(index), y: Double(itemCount))
+                dataEntries.append(dataEntry)
+            }
+            
+            let chartDataSet = LineChartDataSet(entries: dataEntries, label: selectedItem)
+            chartDataSet.colors = [getRandomColor()]
+            chartDataSet.valueFont = .systemFont(ofSize: 10)
+            chartDataSet.valueTextColor = .black
+            chartDataSet.circleRadius = 7.0
+            chartDataSet.circleColors = [UIColor.cyan]
+            
+            chartDataSet.lineWidth = 4.0
+            chartDataSet.valueFormatter = ChartValueFormatter()
+            
+            dataSets.append(chartDataSet)
+        }
+        
+        // Update the chart with the new data sets
+        let chartData = LineChartData(dataSets: dataSets)
+        lineChartView.data = chartData
+        
+        // Set the Y-axis to only show whole numbers
+        lineChartView.leftAxis.axisMinimum = 0
+        lineChartView.leftAxis.granularity = 1
+        lineChartView.leftAxis.granularityEnabled = true
+        lineChartView.leftAxis.labelCount = 6
+        lineChartView.leftAxis.valueFormatter = DefaultAxisValueFormatter(decimals: 0)
+
+        // Repeat for rightAxis if you use it
+        lineChartView.rightAxis.axisMinimum = 0
+        lineChartView.rightAxis.granularity = 1
+        lineChartView.rightAxis.granularityEnabled = true
+        lineChartView.rightAxis.labelCount = 6 
+        lineChartView.rightAxis.valueFormatter = DefaultAxisValueFormatter(decimals: 0)
+
+        
+        // Customize the x-axis to display dates
+        lineChartView.xAxis.valueFormatter = IndexAxisValueFormatter(values: dates)
+        lineChartView.xAxis.granularity = 1
+        lineChartView.xAxis.labelPosition = .bottom
+        lineChartView.xAxis.labelFont = .systemFont(ofSize: 12)
+        lineChartView.xAxis.labelRotationAngle = -90
+        
+        // Move the legend to the top right
+        lineChartView.legend.verticalAlignment = .top
+        lineChartView.legend.horizontalAlignment = .right
+        
+        // Enable value labels to show item count above points
+        dataSets.forEach { $0.drawValuesEnabled = true }
+        
+        // Disable grid lines for a cleaner look
+        lineChartView.xAxis.drawGridLinesEnabled = false
+        lineChartView.leftAxis.drawGridLinesEnabled = false
+        lineChartView.rightAxis.drawGridLinesEnabled = false
+        
+        lineChartView.extraBottomOffset = 200
+        
+        // Add animation to the chart
+        lineChartView.animate(xAxisDuration: 1, easingOption: .easeInOutQuad)
+    }
+    
+    // Helper method to get a random color for each data set
+    func getRandomColor() -> UIColor {
+        return UIColor(red: CGFloat(drand48()), green: CGFloat(drand48()), blue: CGFloat(drand48()), alpha: 1.0)
+    }
+    
+    // UITableViewDataSource methods
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return itemsToTrack.count
+    }
+    
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "cell") ?? UITableViewCell(style: .default, reuseIdentifier: "cell")
+        cell.textLabel?.text = itemsToTrack[indexPath.row]
+        return cell
+    }
+    
+    // UITableViewDelegate methods
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        let selectedItem = itemsToTrack[indexPath.row]
+        if !selectedItems.contains(selectedItem) {
+            selectedItems.append(selectedItem)
+        }
+        updateChartWithData()
+    }
+    
+    func tableView(_ tableView: UITableView, didDeselectRowAt indexPath: IndexPath) {
+        let deselectedItem = itemsToTrack[indexPath.row]
+        if let index = selectedItems.firstIndex(of: deselectedItem) {
+            selectedItems.remove(at: index)
+        }
+        updateChartWithData()
+    }
+}
+
+class ChartValueFormatter: ValueFormatter {
+    
+    func stringForValue(_ value: Double, entry: ChartDataEntry, dataSetIndex: Int, viewPortHandler: ViewPortHandler?) -> String {
+        return String(format: "%.0f", value)
+    }
+}
