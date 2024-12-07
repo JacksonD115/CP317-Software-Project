@@ -1,0 +1,162 @@
+//
+//  ProfitViewController.swift
+//  SalesTracker
+//  Track total sales by day
+
+
+import Foundation
+import UIKit
+import DGCharts
+import FirebaseDatabase
+
+struct LogWithTotalCost {
+    let totalCost: Double
+    let timestamp: TimeInterval
+}
+
+
+class ProfitViewController: UIViewController {
+    private let ref = Database.database().reference()
+    private var priceData = [String: Double]()
+    private var lineChartView: LineChartView!
+    private var dates: [String] = []
+    private let scrollView = UIScrollView()
+    private let containerView = UIView()
+    private var updateTimer: Timer?
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Sales Data"
+        fetchAndUpdateChart()
+        
+        lineChartView = LineChartView()
+        lineChartView.translatesAutoresizingMaskIntoConstraints = false
+        lineChartView.noDataText = "Fetching data..."
+        lineChartView.noDataTextColor = .gray
+        lineChartView.noDataFont = .systemFont(ofSize: 16, weight: .medium)
+        view.addSubview(lineChartView)
+        
+        NSLayoutConstraint.activate([
+            lineChartView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            lineChartView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            lineChartView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            lineChartView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
+        ])
+        updateTimer = Timer.scheduledTimer(timeInterval: 30.0, target: self, selector: #selector(fetchAndUpdateChart), userInfo: nil, repeats: true)
+        
+        fetchArchivedLogs { logs in
+            self.priceData = self.calculateTotalPricesByDate(logs: logs)
+            self.dates = self.dates
+            self.updateChartWithData(with: self.priceData)
+        }
+    }
+    
+    @objc func fetchAndUpdateChart() {
+        fetchArchivedLogs { logs in
+            self.priceData = self.calculateTotalPricesByDate(logs: logs)
+            self.updateChartWithData(with: self.priceData)
+        }
+    }
+    
+    func fetchArchivedLogs(completion: @escaping ([LogWithTotalCost]) -> Void) {
+        ref.child("archivedLogs").observeSingleEvent(of: .value) { snapshot in
+            guard let logsDict = snapshot.value as? [String: [String: Any]] else {
+                print("No Logs Found")
+                completion([])
+                return
+            }
+            let logs: [LogWithTotalCost] = logsDict.compactMap { (_, logData) in
+                guard let totalCost = logData["totalCost"] as? Double,
+                      let timestamp = logData["timestamp"] as? TimeInterval else {
+                    print("Invalid log entry: \(logData)")
+                    return nil
+                }
+                return LogWithTotalCost(totalCost: totalCost, timestamp: timestamp)
+            }
+            print("Fetched logs: \(logs)")
+            completion(logs)
+        }
+    }
+    
+    func calculateTotalPricesByDate(logs: [LogWithTotalCost]) -> [String: Double] {
+        var dailyTotals = [String: Double]()
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
+        logs.forEach { log in
+            let date = dateFormatter.string(from: Date(timeIntervalSince1970: log.timestamp))
+            dailyTotals[date, default: 0.0] += log.totalCost
+        }
+        print("Daily Totals: \(dailyTotals)")
+        return dailyTotals
+    }
+    
+    func calculateTotalRevenue (logs: [LogWithOrders]) -> [String: Double] {
+        var revenueData = [String: [Double]]()
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
+        let calendar = Calendar.current
+        let timePeriod = calendar.date(byAdding: .day, value: -7, to: Date())!
+        
+        logs.forEach { log in
+            let date = dateFormatter.string(from: Date(timeIntervalSince1970: log.timestamp))
+            let logDate = dateFormatter.date(from: date) ?? Date()
+            
+            if logDate >= timePeriod {
+                log.orders.forEach { order in
+                    revenueData[date, default: []].append(order.totalCost)
+                }
+            }
+        }
+        
+        return revenueData.mapValues { sales in
+            sales.reduce(0, +)
+        }
+    }
+    
+    func updateChartWithData(with dailyTotals: [String: Double]) {
+        
+        guard !dailyTotals.isEmpty else {
+            lineChartView.data = nil
+            lineChartView.noDataText = "No sales data available"
+            return
+        }
+        
+        let sortedDates = dailyTotals.keys.sorted()
+        self.dates = sortedDates
+        var dataEntries: [ChartDataEntry] = []
+        
+        for (index, date) in sortedDates.enumerated() {
+            let totalPrice = dailyTotals[date] ?? 0.0
+            let dataEntry = ChartDataEntry(x: Double(index), y: totalPrice)
+            dataEntries.append(dataEntry)
+        }
+        
+        print("Data Entries: \(dataEntries)")
+        print("Dates: \(dates)")
+        
+        let chartDataSet = LineChartDataSet(entries: dataEntries, label: "Revenue by day ($)")
+        chartDataSet.colors = [.systemBlue]
+        chartDataSet.valueFont = .systemFont(ofSize: 10)
+        chartDataSet.circleRadius = 4.0
+        chartDataSet.circleColors = [.systemBlue]
+        chartDataSet.lineWidth = 1.0
+        
+        let chartData = LineChartData(dataSet: chartDataSet)
+        lineChartView.data = chartData
+        
+        lineChartView.xAxis.valueFormatter = IndexAxisValueFormatter(values: self.dates)
+        lineChartView.xAxis.granularity = 1
+        lineChartView.xAxis.labelPosition = .bottom
+        lineChartView.xAxis.labelRotationAngle = -45
+        
+        lineChartView.leftAxis.axisMaximum = 0
+        lineChartView.leftAxis.axisMaximum = (dailyTotals.values.max() ?? 1.0) + 100
+        lineChartView.leftAxis.valueFormatter = DefaultAxisValueFormatter(decimals: 0)
+        
+        lineChartView.rightAxis.enabled = false
+    }
+}
